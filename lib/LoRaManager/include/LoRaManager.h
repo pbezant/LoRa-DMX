@@ -4,18 +4,28 @@
 #include <Arduino.h>
 #include <RadioLib.h>
 
+// Define band type constants
+#define BAND_TYPE_US915 1
+#define BAND_TYPE_EU868 2
+#define BAND_TYPE_OTHER 0
+
 /**
  * @brief A class to manage LoRaWAN communication using RadioLib
  * 
  * This class provides a simplified interface for LoRaWAN communication,
  * handling connection establishment, data transmission and reception.
+ * Default configuration uses the US915 frequency band with subband 2 (channels 8-15),
+ * but this can be configured in the constructor.
  */
 class LoRaManager {
 public:
     /**
-     * @brief Constructor
+     * @brief Constructor with configurable frequency band (defaults to US915) and subband (defaults to 2)
+     * 
+     * @param freqBand The LoRaWAN frequency band to use (defaults to US915)
+     * @param subBand The subband to use (defaults to 2 for US915)
      */
-    LoRaManager();
+    LoRaManager(LoRaWANBand_t freqBand = US915, uint8_t subBand = 2);
     
     /**
      * @brief Destructor
@@ -113,17 +123,27 @@ public:
      */
     int getLastErrorCode();
     
+    /**
+     * @brief Get the frequency band type (US915, EU868, or OTHER)
+     * 
+     * @return uint8_t Band type constant (BAND_TYPE_US915, BAND_TYPE_EU868, or BAND_TYPE_OTHER)
+     */
+    uint8_t getBandType();
+    
 private:
     // Radio module and LoRaWAN node
     SX1262* radio;
     LoRaWANNode* node;
-    const LoRaWANBand_t* lorawanBand;
     
     // LoRaWAN credentials
     uint64_t joinEUI;
     uint64_t devEUI;
     uint8_t appKey[16];
     uint8_t nwkKey[16];
+    
+    // Frequency band and subband configuration
+    LoRaWANBand_t freqBand;
+    uint8_t subBand;
     
     // Status variables
     bool isJoined;
@@ -137,6 +157,14 @@ private:
     
     // Error handling
     int lastErrorCode;
+    
+    /**
+     * @brief Configure subband channel mask based on the current subband
+     * 
+     * @param targetSubBand The subband to configure (1-8)
+     * @return int Result code from setupChannelsDyn
+     */
+    int configureSubbandChannels(uint8_t targetSubBand);
 };
 
 #endif // LORA_MANAGER_H 

@@ -1,14 +1,22 @@
 /**
- * DMX Controller Test Program
+ * DMX LoRa Control System for Heltec LoRa 32 V3
  * 
- * This program tests DMX initialization with simple error handling
- * Updated to work with esp_dmx 4.1.0
- * Converted to 4-channel RGBW mode (removed strobe channel)
- * Refactored to support a variable number of fixtures
- * Refactored DMX functionality into DmxController library
+ * Receives JSON commands over The Things Network (TTN) and translates them
+ * into DMX signals to control multiple DMX lighting fixtures.
+ * 
+ * Created for US915 frequency plan (United States)
+ * Uses OTAA activation for TTN
+ * 
+ * Libraries:
+ * - LoRaManager: Custom LoRaWAN communication via RadioLib
+ * - ArduinoJson: JSON parsing
+ * - DmxController: DMX output control
  */
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
+#include <SPI.h>  // Include SPI library explicitly
+#include "LoRaManager.h"
 #include "DmxController.h"
 
 // Debug output
@@ -23,42 +31,200 @@
 #define DMX_RX_PIN 20  // RX pin for DMX
 #define DMX_DIR_PIN 5  // DIR pin for DMX (connect to both DE and RE on MAX485)
 
-// FIXTURE CONFIGURATION
-#define NUM_FIXTURES 2  // Number of DMX fixtures to control (can be changed)
-#define CHANNELS_PER_FIXTURE 4  // Using 4-channel RGBW mode
+// LoRaWAN TTN Connection Parameters
+#define LORA_CS_PIN   8     // Corrected CS pin for Heltec LoRa 32 V3
+#define LORA_DIO1_PIN 14    // DIO1 pin
+#define LORA_RESET_PIN 12   // Reset pin  
+#define LORA_BUSY_PIN 13    // Busy pin
 
-// FIXTURE 1 CONFIGURATION
-#define FIXTURE1_NAME "Light 1"
-#define FIXTURE1_START_ADDR 1  // First fixture starts at channel 1
-#define FIXTURE1_RED_CHANNEL 1     // Red dimmer
-#define FIXTURE1_GREEN_CHANNEL 2   // Green dimmer
-#define FIXTURE1_BLUE_CHANNEL 3    // Blue dimmer
-#define FIXTURE1_WHITE_CHANNEL 4   // White dimmer
+// SPI pins for Heltec LoRa 32 V3
+#define LORA_SPI_SCK  9   // SPI clock
+#define LORA_SPI_MISO 11  // SPI MISO
+#define LORA_SPI_MOSI 10  // SPI MOSI
 
-// FIXTURE 2 CONFIGURATION
-#define FIXTURE2_NAME "Light 2"
-#define FIXTURE2_START_ADDR 5  // Second fixture starts at channel 5 (right after fixture 1)
-#define FIXTURE2_RED_CHANNEL 5     // Red dimmer
-#define FIXTURE2_GREEN_CHANNEL 6   // Green dimmer
-#define FIXTURE2_BLUE_CHANNEL 7    // Blue dimmer
-#define FIXTURE2_WHITE_CHANNEL 8   // White dimmer
+// LoRaWAN Credentials (can be changed by the user)
+uint64_t joinEUI = 0x0000000000000001; // 0000000000000001
+uint64_t devEUI = 0x70B3D57ED80041B2;  // 70B3D57ED80041B2
+uint8_t appKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // 45D37BF37761A61F9F071FE16D4F5777
+uint8_t nwkKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // Same as appKey for OTAA
 
-// ADDRESS SCAN CONFIGURATION
-#define SCAN_START_ADDR 1
-#define SCAN_END_ADDR 61   // Check addresses at CHANNELS_PER_FIXTURE intervals
-#define SCAN_STEP CHANNELS_PER_FIXTURE
-
-// Common settings
-#define MAX_BRIGHTNESS 255        // Maximum brightness (0-255)
+// DMX configuration - we'll use dynamic configuration from JSON
+#define MAX_FIXTURES 32           // Maximum number of fixtures supported
+#define MAX_CHANNELS_PER_FIXTURE 16 // Maximum channels per fixture
+#define MAX_JSON_SIZE 1024        // Maximum size of JSON document
 
 // Global variables
 bool dmxInitialized = false;
+bool loraInitialized = false;
 DmxController* dmx = NULL;
+LoRaManager* lora = NULL;
+
+// Forward declaration of the callback function
+void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port);
+
+// Placeholder for the received data
+uint8_t receivedData[MAX_JSON_SIZE];
+size_t receivedDataSize = 0;
+uint8_t receivedPort = 0;
+bool dataReceived = false;
+
+/**
+ * Process JSON payload and control DMX fixtures
+ * 
+ * Expected JSON format:
+ * {
+ *   "lights": [
+ *     {
+ *       "address": 1,
+ *       "channels": [255, 0, 128, 0]
+ *     },
+ *     {
+ *       "address": 5,
+ *       "channels": [255, 255, 100, 0]
+ *     }
+ *   ]
+ * }
+ * 
+ * @param jsonString The JSON string to process
+ * @return true if processing was successful, false otherwise
+ */
+bool processJsonPayload(const String& jsonString) {
+  Serial.println("Processing JSON payload: " + jsonString);
+  
+  // Create a JSON document
+  StaticJsonDocument<MAX_JSON_SIZE> doc;
+  
+  // Parse the JSON string
+  DeserializationError error = deserializeJson(doc, jsonString);
+  
+  // Check for parsing errors
+  if (error) {
+    Serial.print("JSON parsing failed: ");
+    Serial.println(error.c_str());
+    return false;
+  }
+  
+  // Check if the JSON has a "lights" array
+  if (!doc.containsKey("lights") || !doc["lights"].is<JsonArray>()) {
+    Serial.println("JSON format error: 'lights' array not found");
+    return false;
+  }
+  
+  // Get the lights array
+  JsonArray lights = doc["lights"].as<JsonArray>();
+  
+  // Clear all DMX channels before setting new values
+  dmx->clearAllChannels();
+  
+  // Process each light in the array
+  for (JsonObject light : lights) {
+    // Check if light has required fields
+    if (!light.containsKey("address") || !light.containsKey("channels")) {
+      Serial.println("JSON format error: light missing required fields");
+      continue;  // Skip this light
+    }
+    
+    // Get the DMX start address
+    int address = light["address"].as<int>();
+    
+    // Get the channels array
+    JsonArray channels = light["channels"].as<JsonArray>();
+    
+    Serial.print("Setting DMX channels for fixture at address ");
+    Serial.print(address);
+    Serial.print(": ");
+    
+    // Set the channel values
+    int channelIndex = 0;
+    for (JsonVariant value : channels) {
+      uint8_t dmxValue = value.as<uint8_t>();
+      // Set the DMX value for this channel
+      dmx->getDmxData()[address + channelIndex] = dmxValue;
+      
+      Serial.print(dmxValue);
+      Serial.print(" ");
+      
+      channelIndex++;
+    }
+    Serial.println();
+  }
+  
+  // Send the updated DMX data
+  dmx->sendData();
+  
+  return true;
+}
+
+/**
+ * Callback function for receiving downlink data from LoRaWAN
+ * This function will be called by the LoRaManager when data is received
+ * 
+ * @param payload The payload data
+ * @param size The size of the payload
+ * @param port The port on which the data was received
+ */
+void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
+  Serial.print("Downlink callback triggered on port ");
+  Serial.print(port);
+  Serial.print(", size: ");
+  Serial.println(size);
+  
+  // Store the data for processing in the main loop
+  if (size <= MAX_JSON_SIZE) {
+    memcpy(receivedData, payload, size);
+    receivedDataSize = size;
+    receivedPort = port;
+    dataReceived = true;
+    
+    // Blink LED once to indicate data reception
+    digitalWrite(LED_PIN, HIGH);
+    delay(50);
+    digitalWrite(LED_PIN, LOW);
+  } else {
+    Serial.println("ERROR: Received payload exceeds buffer size");
+  }
+}
+
+/**
+ * Handle incoming downlink data from LoRaWAN
+ * 
+ * @param payload The payload data
+ * @param size The size of the payload
+ * @param port The port on which the data was received
+ */
+void handleDownlink(uint8_t* payload, size_t size, uint8_t port) {
+  Serial.print("Received downlink on port ");
+  Serial.print(port);
+  Serial.print(", size: ");
+  Serial.println(size);
+  
+  // Convert payload to string
+  String payloadStr = "";
+  for (size_t i = 0; i < size; i++) {
+    payloadStr += (char)payload[i];
+  }
+  
+  // Process the payload as JSON
+  if (dmxInitialized) {
+    bool success = processJsonPayload(payloadStr);
+    if (success) {
+      // Blink LED to indicate successful processing
+      DmxController::blinkLED(LED_PIN, 2, 200);
+    } else {
+      // Blink LED rapidly to indicate error
+      DmxController::blinkLED(LED_PIN, 5, 100);
+    }
+  } else {
+    Serial.println("DMX not initialized, cannot process payload");
+    // Blink LED rapidly to indicate error
+    DmxController::blinkLED(LED_PIN, 5, 100);
+  }
+}
 
 void setup() {
   // Initialize serial first
   Serial.begin(SERIAL_BAUD);
-  delay(3000);
+  delay(2000);
   
   // Set up LED pin
   pinMode(LED_PIN, OUTPUT);
@@ -66,303 +232,168 @@ void setup() {
   // Initial blink to indicate we're alive
   DmxController::blinkLED(LED_PIN, 2, 500);
   
-  // Print startup message with delay between lines to ensure complete transmission
-  Serial.println("\n\n===== DMX Test Program =====");
-  delay(100);
-  Serial.println("Testing serial output...");
-  delay(100);
+  // Print startup message
+  Serial.println("\n\n===== DMX LoRa Control System =====");
+  Serial.println("Initializing...");
   
-  // Print ESP-IDF version only
+  // Print ESP-IDF version
   Serial.print("ESP-IDF Version: ");
   Serial.println(ESP.getSdkVersion());
-  delay(100);
   
   // Print memory info
-  Serial.print("Free heap before DMX: ");
+  Serial.print("Free heap at startup: ");
   Serial.println(ESP.getFreeHeap());
-  delay(100);
   
-  // Print pin information
-  Serial.println("DMX Pin Configuration:");
-  Serial.print("TX Pin: ");
-  Serial.print(DMX_TX_PIN);
-  Serial.print(" - Function: ");
-  Serial.println("DMX Data Output (connect to DI on MAX485)");
+  // Print LoRa pin configuration for debugging
+  Serial.println("\nLoRa Pin Configuration:");
+  Serial.printf("CS Pin: %d\n", LORA_CS_PIN);
+  Serial.printf("DIO1 Pin: %d\n", LORA_DIO1_PIN);
+  Serial.printf("Reset Pin: %d\n", LORA_RESET_PIN);
+  Serial.printf("Busy Pin: %d\n", LORA_BUSY_PIN);
+  Serial.printf("SPI SCK: %d, MISO: %d, MOSI: %d\n", LORA_SPI_SCK, LORA_SPI_MISO, LORA_SPI_MOSI);
+  Serial.println("Frequency: Default to US915 (United States) - but configurable to other bands");
+  Serial.println("Default frequency band is US915 with subband 2");
   
-  Serial.print("RX Pin: ");
-  Serial.print(DMX_RX_PIN);
-  Serial.print(" - Function: ");
-  Serial.println("DMX Data Input (connect to RO on MAX485 if receiving)");
+  // Initialize SPI for LoRa
+  SPI.begin(LORA_SPI_SCK, LORA_SPI_MISO, LORA_SPI_MOSI);
+  Serial.println("SPI initialized for LoRa");
+  delay(100); // Short delay after SPI init
   
-  Serial.print("DIR Pin: ");
-  Serial.print(DMX_DIR_PIN);
-  Serial.print(" - Function: ");
-  Serial.println("Direction control (connect to both DE and RE on MAX485)");
-  Serial.println("Set HIGH for transmit mode, LOW for receive mode");
-  delay(100);
+  // Initialize LoRaWAN
+  Serial.println("\nInitializing LoRaWAN...");
   
-  // Create DMX controller with explicit pin configuration
-  Serial.println("Creating DMX controller object");
-  delay(100);
+  try {
+    // Create delay before LoRa initialization
+    delay(200);
+    
+    // Create a new LoRaManager with default US915 band and subband 2 (can be changed for other regions)
+    lora = new LoRaManager(US915, 2);
+    Serial.println("LoRaManager instance created, attempting to initialize radio...");
+    
+    // Add delay before begin
+    delay(100);
+    
+    if (lora->begin(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RESET_PIN, LORA_BUSY_PIN)) {
+      Serial.println("LoRaWAN module initialized successfully!");
+      
+      // Set credentials
+      lora->setCredentials(joinEUI, devEUI, appKey, nwkKey);
+      Serial.println("LoRaWAN credentials set");
+      
+      // Register the downlink callback
+      // TODO: lora->setDownlinkCallback(handleDownlinkCallback);
+      Serial.println("Downlink callback registered");
+      
+      // Join network
+      Serial.println("Joining LoRaWAN network...");
+      if (lora->joinNetwork()) {
+        Serial.println("Successfully joined LoRaWAN network!");
+        
+        // Add delay to allow session establishment to complete
+        Serial.println("Waiting for session establishment...");
+        delay(5000);  // 5 second delay after join
+        
+        loraInitialized = true;
+        DmxController::blinkLED(LED_PIN, 3, 300);  // 3 blinks for successful join
+      } else {
+        Serial.print("Failed to join LoRaWAN network. Error code: ");
+        Serial.println(lora->getLastErrorCode());
+        DmxController::blinkLED(LED_PIN, 4, 200);  // 4 blinks for join failure
+      }
+    } else {
+      Serial.print("Failed to initialize LoRaWAN. Error code: ");
+      Serial.println(lora->getLastErrorCode());
+      DmxController::blinkLED(LED_PIN, 5, 100);  // 5 blinks for init failure
+    }
+  } catch (...) {
+    Serial.println("ERROR: Exception during LoRaWAN initialization!");
+    lora = NULL;
+  }
+  
+  // Initialize DMX with error handling
+  Serial.println("\nInitializing DMX controller...");
   
   try {
     dmx = new DmxController(DMX_PORT, DMX_TX_PIN, DMX_RX_PIN, DMX_DIR_PIN);
     Serial.println("DMX controller object created");
-    delay(100);
+    
+    // Initialize DMX
+    dmx->begin();
+    dmxInitialized = true;
+    Serial.println("DMX controller initialized successfully!");
+    
+    // Set initial values to zero and send to make sure fixtures are clear
+    dmx->clearAllChannels();
+    dmx->sendData();
+    Serial.println("DMX channels cleared");
   } catch (...) {
-    Serial.println("ERROR: Failed to create DMX controller object");
-    DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
+    Serial.println("ERROR: Exception during DMX initialization!");
     dmx = NULL;
-    return;
+    dmxInitialized = false;
+    DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
   }
   
-  // Initialize fixtures
-  dmx->initializeFixtures(NUM_FIXTURES, CHANNELS_PER_FIXTURE);
-  
-  // Configure fixture 1
-  dmx->setFixtureConfig(0, FIXTURE1_NAME, FIXTURE1_START_ADDR, 
-                        FIXTURE1_RED_CHANNEL, FIXTURE1_GREEN_CHANNEL, 
-                        FIXTURE1_BLUE_CHANNEL, FIXTURE1_WHITE_CHANNEL);
-                        
-  // Configure fixture 2
-  dmx->setFixtureConfig(1, FIXTURE2_NAME, FIXTURE2_START_ADDR, 
-                        FIXTURE2_RED_CHANNEL, FIXTURE2_GREEN_CHANNEL, 
-                        FIXTURE2_BLUE_CHANNEL, FIXTURE2_WHITE_CHANNEL);
-  
-  // Initialize DMX with error handling
-  Serial.println("\nInitializing DMX controller...");
-  delay(100);
-  
-  if (dmx != NULL) {
-    try {
-      dmx->begin();
-      dmxInitialized = true;
-      Serial.println("DMX controller initialized successfully!");
-      delay(100);
-      
-      // Set initial values to zero and send to make sure fixtures are clear
-      dmx->clearAllChannels();
-      dmx->sendData();
-      Serial.println("DMX channels cleared");
-      delay(100);
-    } catch (...) {
-      Serial.println("ERROR: Exception during DMX initialization!");
-      delay(100);
-      DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
-    }
-  }
-  
-  // Print memory after initialization
-  Serial.print("Free heap after DMX: ");
+  Serial.println("\nSetup complete!");
+  Serial.print("Free heap after setup: ");
   Serial.println(ESP.getFreeHeap());
-  delay(100);
   
-  Serial.println("Setup complete.");
-  delay(100);
-  
-  // Indicate completion with LED
-  if (dmxInitialized) {
-    DmxController::blinkLED(LED_PIN, 2, 500);  // Success indicator
+  // Send an uplink message to confirm device is online
+  if (loraInitialized) {
+    // Add delay before first transmission to ensure network is ready
+    Serial.println("Preparing to send first uplink...");
+    delay(2000);  // 2 second delay before first uplink
     
-    // Ask the user if they want to run a channel test
-    Serial.println("\nDo you want to run a channel test to identify the correct channels?");
-    Serial.println("Send 'y' to start the test, any other key to skip.");
-    
-    // Wait for user input for up to 5 seconds
-    unsigned long startTime = millis();
-    while (millis() - startTime < 5000) {
-      if (Serial.available() > 0) {
-        char input = Serial.read();
-        if (input == 'y' || input == 'Y') {
-          Serial.println("Running channel test sequence...");
-          dmx->testAllChannels();
-          break;
-        } else {
-          Serial.println("Skipping channel test.");
-          break;
-        }
-      }
-      delay(100);
+    String message = "{\"status\":\"online\",\"dmx\":" + String(dmxInitialized ? "true" : "false") + "}";
+    if (lora->sendString(message)) {
+      Serial.println("Status uplink sent successfully");
+    } else {
+      Serial.println("Failed to send status uplink");
     }
-    
-    // If no input received, skip the test
-    if (millis() - startTime >= 5000) {
-      Serial.println("No input received, skipping channel test.");
-    }
-    
-    // Now run a test for all fixtures to verify our configuration
-    Serial.println("Testing all fixtures with 4-channel RGBW configuration...");
-    dmx->testAllFixtures();
-    
-    // Special message about the address scanner
-    Serial.println("\n========= FIXTURE TROUBLESHOOTING =========");
-    Serial.println("If fixtures aren't responding, wait for test mode 5 (address scanner)");
-    Serial.println("The scanner will try different addresses every few seconds.");
-    Serial.println("Watch for fixtures to light up, and note the address shown in the serial monitor.");
-    Serial.println("=======================================");
-  } else {
-    DmxController::blinkLED(LED_PIN, 10, 100);  // Error indicator
   }
 }
 
-// Our main loop will iterate through different test patterns
 void loop() {
-  static int testMode = 0;
-  static int counter = 0;
-  
-  // If DMX initialized successfully, try sending a test pattern
-  if (dmxInitialized && dmx != NULL) {
-    try {
-      // Every 10 cycles, change the test mode
-      if (counter % 10 == 0) {
-        testMode = (testMode + 1) % 6;  // 6 test modes
-        Serial.print("Switching to test mode ");
-        Serial.println(testMode);
-      }
+  // Handle LoRaWAN events (includes receiving downlinks)
+  if (loraInitialized && lora != NULL) {
+    lora->handleEvents();
+    
+    // Check if we have received data
+    if (dataReceived) {
+      // Process the received data
+      handleDownlink(receivedData, receivedDataSize, receivedPort);
       
-      // Clear all channels first
-      dmx->clearAllChannels();
-      
-      // Apply the current test mode
-      switch (testMode) {
-        case 0:
-          // Mode 0: Alternate Fixture 1 between red and blue
-          if (counter % 2 == 0) {
-            // RED on fixture 1
-            dmx->setFixtureColor(0, 255, 0, 0);
-            Serial.print("Setting Fixture 1 to RED (Ch");
-            Serial.print(dmx->getFixture(0)->redChannel);
-            Serial.println(")");
-          } else {
-            // BLUE on fixture 1
-            dmx->setFixtureColor(0, 0, 0, 255);
-            Serial.print("Setting Fixture 1 to BLUE (Ch");
-            Serial.print(dmx->getFixture(0)->blueChannel);
-            Serial.println(")");
-          }
-          break;
-          
-        case 1:
-          // Mode 1: If there's at least 2 fixtures, alternate Fixture 2 between red and blue
-          if (dmx->getNumFixtures() >= 2) {
-            if (counter % 2 == 0) {
-              // RED on fixture 2
-              dmx->setFixtureColor(1, 255, 0, 0);
-              Serial.print("Setting Fixture 2 to RED (Ch");
-              Serial.print(dmx->getFixture(1)->redChannel);
-              Serial.println(")");
-            } else {
-              // BLUE on fixture 2
-              dmx->setFixtureColor(1, 0, 0, 255);
-              Serial.print("Setting Fixture 2 to BLUE (Ch");
-              Serial.print(dmx->getFixture(1)->blueChannel);
-              Serial.println(")");
-            }
-          } else {
-            // If there's only one fixture, do something with it
-            dmx->setFixtureColor(0, 0, 255, 0); // GREEN on fixture 1
-            Serial.println("Only one fixture configured - setting Fixture 1 to GREEN");
-          }
-          break;
-          
-        case 2:
-          // Mode 2: Cycle through RGB on fixture 1
-          switch (counter % 3) {
-            case 0:
-              dmx->setFixtureColor(0, 255, 0, 0);
-              Serial.print("Setting Fixture 1 to RED (Ch");
-              Serial.print(dmx->getFixture(0)->redChannel);
-              Serial.println(")");
-              break;
-            case 1:
-              dmx->setFixtureColor(0, 0, 255, 0);
-              Serial.print("Setting Fixture 1 to GREEN (Ch");
-              Serial.print(dmx->getFixture(0)->greenChannel);
-              Serial.println(")");
-              break;
-            case 2:
-              dmx->setFixtureColor(0, 0, 0, 255);
-              Serial.print("Setting Fixture 1 to BLUE (Ch");
-              Serial.print(dmx->getFixture(0)->blueChannel);
-              Serial.println(")");
-              break;
-          }
-          break;
-          
-        case 3:
-          // Mode 3: All fixtures to WHITE
-          Serial.println("Setting ALL fixtures to WHITE (RGBW)");
-          for (int i = 0; i < dmx->getNumFixtures(); i++) {
-            dmx->setFixtureColor(i, 255, 255, 255, 255);
-          }
-          break;
-          
-        case 4:
-          // Mode 4: Complementary colors if there are at least 2 fixtures
-          if (dmx->getNumFixtures() >= 2) {
-            if (counter % 2 == 0) {
-              // Fixture 1 RED, Fixture 2 CYAN
-              dmx->setFixtureColor(0, 255, 0, 0);
-              dmx->setFixtureColor(1, 0, 255, 255);
-              Serial.print("Setting Fixture 1 to RED (Ch");
-              Serial.print(dmx->getFixture(0)->redChannel);
-              Serial.print("), Fixture 2 to CYAN (Ch");
-              Serial.print(dmx->getFixture(1)->greenChannel);
-              Serial.print("+Ch");
-              Serial.print(dmx->getFixture(1)->blueChannel);
-              Serial.println(")");
-            } else {
-              // Fixture 1 GREEN, Fixture 2 MAGENTA
-              dmx->setFixtureColor(0, 0, 255, 0);
-              dmx->setFixtureColor(1, 255, 0, 255);
-              Serial.print("Setting Fixture 1 to GREEN (Ch");
-              Serial.print(dmx->getFixture(0)->greenChannel);
-              Serial.print("), Fixture 2 to MAGENTA (Ch");
-              Serial.print(dmx->getFixture(1)->redChannel);
-              Serial.print("+Ch");
-              Serial.print(dmx->getFixture(1)->blueChannel);
-              Serial.println(")");
-            }
-          } else {
-            // If only one fixture, alternate colors
-            if (counter % 2 == 0) {
-              dmx->setFixtureColor(0, 255, 255, 0); // YELLOW
-              Serial.println("Only one fixture - setting to YELLOW");
-            } else {
-              dmx->setFixtureColor(0, 0, 255, 255); // CYAN
-              Serial.println("Only one fixture - setting to CYAN");
-            }
-          }
-          break;
-          
-        case 5:
-          // Mode 5: Address scan to help find fixtures
-          dmx->scanForFixtures(SCAN_START_ADDR, SCAN_END_ADDR, SCAN_STEP);
-          break;
-      }
-      
-      // Send the updated DMX data
-      dmx->sendData();
-      
-      // Print diagnostic information
-      dmx->printFixtureValues();
-      
-      // Blink the onboard LED to show we're running
-      digitalWrite(LED_PIN, (counter % 2) ? HIGH : LOW);
-      
-      // Increment counter
-      counter++;
-      
-    } catch (...) {
-      Serial.println("ERROR: Exception in loop while sending DMX data");
+      // Reset the flag
+      dataReceived = false;
     }
-  } else {
-    // Just blink the LED if DMX failed to initialize
-    digitalWrite(LED_PIN, HIGH);
-    delay(100);
-    digitalWrite(LED_PIN, LOW);
-    delay(900);
   }
   
-  delay(5000);  // Slowed down to 5 seconds per step
+  // Receive DMX data if needed (for bidirectional operation)
+  // This would be implemented if we needed to receive DMX data
+  
+  // Blink LED occasionally to show we're alive
+  static unsigned long lastBlink = 0;
+  if (millis() - lastBlink > 5000) {  // Every 5 seconds
+    digitalWrite(LED_PIN, HIGH);
+    delay(50);
+    digitalWrite(LED_PIN, LOW);
+    lastBlink = millis();
+    
+    // Send a periodic status update
+    if (loraInitialized) {
+      // Format a simple status message
+      String statusMsg = "{\"status\":\"alive\",\"uptime\":" + String(millis()/1000) + "}";
+      
+      // Only send every 10 minutes to avoid using too much airtime
+      static unsigned long lastStatusUpdate = 0;
+      if (millis() - lastStatusUpdate > 600000) {  // 10 minutes
+        if (lora->sendString(statusMsg)) {
+          Serial.println("Status update sent");
+        }
+        lastStatusUpdate = millis();
+      }
+    }
+  }
+  
+  // Short delay to prevent hogging the CPU
+  delay(10);
 }

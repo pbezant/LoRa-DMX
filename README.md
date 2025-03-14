@@ -1,138 +1,167 @@
-# DMX LoRa Controller
+# DMX LoRa Control System
 
-This project enables control of DMX lighting fixtures using JSON commands received over The Things Network (TTN) LoRaWAN network. It uses a Heltec LoRa 32 V3 board to receive commands wirelessly and output DMX512 signals to control lighting fixtures.
+This project implements a DMX lighting controller using a Heltec LoRa 32 V3 microcontroller that receives control commands over The Things Network (TTN) via LoRaWAN. It allows remote control of DMX lighting fixtures through JSON-formatted messages.
 
 ## Features
 
-- **LoRaWAN Communication**: Connects to TTN using the US915 frequency plan (for United States)
-- **OTAA Activation**: Secure Over-The-Air Activation for LoRaWAN
-- **JSON Command Parsing**: Processes JSON-formatted lighting commands
-- **DMX512 Output**: Controls multiple DMX fixtures with different channel configurations
-- **Easy Configuration**: Simple credential setup for TTN connectivity
-- **Error Handling**: Robust error handling for LoRaWAN, JSON, and DMX operations
-- **Low Power**: Optimized for battery operation
+- Connects to The Things Network (TTN) using LoRaWAN (US915 frequency plan)
+- Uses OTAA (Over-The-Air Activation) for secure network joining
+- Receives JSON-formatted commands for controlling DMX fixtures
+- Processes JSON payloads to control multiple DMX fixtures at different addresses
+- Includes comprehensive error handling and debugging features
+- Supports dynamic fixture configuration without hardcoded settings
 
 ## Hardware Requirements
 
-- **Heltec LoRa 32 V3** board
-- **MAX485 transceiver** for DMX output (or equivalent RS-485 transceiver)
-- **DMX lighting fixtures**
-- **120 ohm terminating resistor** for the DMX line
+- Heltec LoRa 32 V3 microcontroller
+- MAX485 transceiver for DMX output
+- 120 ohm terminating resistor for the DMX line
+- DMX lighting fixtures
 
 ## Wiring Diagram
 
-```
-Heltec LoRa 32 V3     MAX485
------------------     -------
-TX Pin (43)    -----> DI (Data In)
-RX Pin (44)    -----> RO (Receive Out)
-DIR Pin (8)    -----> DE/RE (Direction Control)
-3.3V           -----> VCC
-GND            -----> GND
+Connect the MAX485 transceiver to the Heltec LoRa 32 V3 as follows:
 
-MAX485                DMX Fixtures
--------               ------------
-A                -----|---+---+--- (to fixtures)
-B                -----|---+---+---
-                      |
-                      120Ω resistor
-                      |
-                     GND
-```
+| Heltec Pin | MAX485 Pin | Function |
+|------------|------------|----------|
+| 19 (TX)    | DI         | Data Input (transmit data to DMX) |
+| 20 (RX)    | RO         | Data Output (receive data from DMX if needed) |
+| 5          | DE & RE    | Direction control (connect to both DE and RE) |
+| 3.3V       | VCC        | Power supply |
+| GND        | GND        | Ground |
+
+Connect the DMX output from the MAX485 as follows:
+
+| MAX485 Pin | DMX Pin   | Notes |
+|------------|-----------|-------|
+| A          | DMX+ (3)  | Data+ |
+| B          | DMX- (2)  | Data- |
+| GND        | GND (1)   | Ground (optional depending on setup) |
+
+Don't forget to add a 120 ohm resistor between A and B at the end of the DMX line for proper termination.
 
 ## Software Setup
 
-### Prerequisites
+### Required Libraries
 
-- [PlatformIO](https://platformio.org/) (recommended) or Arduino IDE
-- Required libraries (automatically installed with PlatformIO):
-  - ArduinoJson
-  - esp_dmx
-  - RadioLib
+This project uses the following libraries:
+- RadioLib (for LoRaWAN communication)
+- ArduinoJson (for JSON parsing)
+- esp_dmx (for DMX control)
 
-### Configuration
+Plus the custom libraries included in the project:
+- LoRaManager (a wrapper around RadioLib for easier LoRaWAN management)
+- DmxController (a wrapper around esp_dmx for easier DMX control)
 
-1. **LoRaWAN Credentials**: Edit the following definitions in `src/main.cpp` with your TTN credentials:
+### PlatformIO Configuration
+
+The project uses PlatformIO for dependency management and building. The configuration is in the `platformio.ini` file.
+
+### TTN Configuration
+
+1. Create an application in The Things Network Console
+2. Register your device in the application (using OTAA)
+3. Update the credentials in the code:
+   - joinEUI (Application EUI)
+   - devEUI (Device EUI)
+   - appKey (Application Key)
+
+### Modifying LoRaWAN Credentials
+
+You can edit the LoRaWAN credentials in the main.cpp file:
 
 ```cpp
-#define DEVEUI_MSB "0000000000000000"  // Replace with your Device EUI (MSB format)
-#define APPEUI_MSB "0000000000000000"  // Replace with your Application EUI (MSB format)
-#define APPKEY_MSB "00000000000000000000000000000000"  // Replace with your App Key (MSB format)
+// LoRaWAN Credentials (can be changed by the user)
+uint64_t joinEUI = 0x0000000000000001; // Replace with your Application EUI
+uint64_t devEUI = 0x70B3D57ED80041B2;  // Replace with your Device EUI
+uint8_t appKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // Replace with your Application Key
 ```
 
-2. **Pin Configuration**: If needed, adjust the pin definitions in `src/main.cpp`:
+## JSON Command Format
 
-```cpp
-// LoRa pins for Heltec LoRa 32 V3
-#define LORA_CS   8
-#define LORA_DIO1 14
-#define LORA_RST  12
-#define LORA_BUSY 13
-
-// DMX configuration
-#define DMX_PORT 1
-#define DMX_TX_PIN 43
-#define DMX_RX_PIN 44
-#define DMX_DIR_PIN 8
-```
-
-## TTN Setup
-
-1. Create a new application in TTN Console
-2. Register your device using OTAA activation
-3. Configure the payload formatter to pass through the JSON data
-
-### Payload Format
-
-The system expects JSON data in the following format:
+The system expects JSON commands in the following format:
 
 ```json
 {
   "lights": [
     {
       "address": 1,
-      "channels": [255, 0, 128]
+      "channels": [255, 0, 128, 0]
     },
     {
       "address": 5,
-      "channels": [0, 255, 255, 100]
+      "channels": [255, 255, 100, 0]
     }
   ]
 }
 ```
 
 Where:
-- `address`: The DMX start address of the fixture
-- `channels`: Array of DMX channel values (0-255)
+- `address`: The DMX start address of the fixture (1-512)
+- `channels`: An array of DMX channel values (0-255) for each channel, relative to the start address
 
-## Building and Uploading
+## TTN Payload Formatter
 
-### With PlatformIO
+Add the following JavaScript decoder in your TTN application to format the downlink payload as a JSON string:
 
-1. Open the project in PlatformIO
-2. Connect your Heltec LoRa 32 V3 board
-3. Click the Upload button
+```javascript
+function decodeDownlink(input) {
+  // For downlink, we simply pass through the JSON string
+  try {
+    var jsonString = String.fromCharCode.apply(null, input.bytes);
+    return {
+      data: {
+        jsonData: jsonString
+      },
+      warnings: [],
+      errors: []
+    };
+  } catch (error) {
+    return {
+      data: {},
+      warnings: [],
+      errors: ["Failed to process downlink: " + error]
+    };
+  }
+}
 
-### With Arduino IDE
-
-1. Install all required libraries
-2. Open `src/main.cpp` as your sketch
-3. Select "Heltec WiFi LoRa 32 V3" as your board
-4. Upload the sketch
+function encodeDownlink(input) {
+  // Convert the input JSON object to a string
+  var jsonString = JSON.stringify(input.data);
+  
+  // Convert the string to an array of bytes
+  var bytes = [];
+  for (var i = 0; i < jsonString.length; i++) {
+    bytes.push(jsonString.charCodeAt(i));
+  }
+  
+  return {
+    bytes: bytes,
+    fPort: 1
+  };
+}
+```
 
 ## Troubleshooting
 
-- **LoRa Connection Issues**: Verify your TTN credentials and ensure you're in range of a TTN gateway
-- **DMX Not Working**: Check your wiring, particularly the MAX485 connections
-- **JSON Parsing Errors**: Ensure your downlink payload follows the expected JSON format
-- **Board Not Detected**: Verify you have the correct USB drivers installed
+### LED Blink Codes
+
+The onboard LED will blink to indicate different states:
+- 2 blinks (slow): Device started successfully
+- 3 blinks: Successfully joined TTN
+- 4 blinks: Failed to join TTN
+- 5 blinks (rapid): Error in initialization or JSON processing
+
+### Serial Output
+
+Connect to the serial monitor at 115200 baud to see detailed diagnostic information.
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Acknowledgments
+## Credits
 
-- Heltec for their ESP32 LoRa boards
-- The Things Network community
-- All the open-source libraries that made this project possible 
+- Heltec for the LoRa 32 V3 hardware
+- The Things Network for LoRaWAN infrastructure
+- Contributors to the used libraries 

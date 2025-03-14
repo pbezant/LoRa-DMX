@@ -1,0 +1,161 @@
+[
+  {
+    "name": "as.up.join.forward",
+    "time": "2025-03-14T19:32:43.171963815Z",
+    "identifiers": [
+      {
+        "device_ids": {
+          "device_id": "dmx-41b2",
+          "application_ids": {
+            "application_id": "fms-demo-smart-office"
+          },
+          "dev_eui": "70B3D57ED80041B2",
+          "join_eui": "0000000000000001",
+          "dev_addr": "27FD4834"
+        }
+      }
+    ],
+    "data": {
+      "@type": "type.googleapis.com/ttn.lorawan.v3.ApplicationUp",
+      "end_device_ids": {
+        "device_id": "dmx-41b2",
+        "application_ids": {
+          "application_id": "fms-demo-smart-office"
+        },
+        "dev_eui": "70B3D57ED80041B2",
+        "join_eui": "0000000000000001",
+        "dev_addr": "27FD4834"
+      },
+      "correlation_ids": [
+        "gs:uplink:01JPB29Z89T88A4KV3JNNPRV3V"
+      ],
+      "received_at": "2025-03-14T19:32:43.168197050Z",
+      "join_accept": {
+        "session_key_id": "AZWWJP0Qkv7bPeep/3um8Q==",
+        "received_at": "2025-03-14T19:32:41.354025404Z"
+      }
+    },
+    "correlation_ids": [
+      "gs:uplink:01JPB29Z89T88A4KV3JNNPRV3V"
+    ],
+    "origin": "ip-10-22-4-122.us-west-1.compute.internal",
+    "context": {
+      "tenant-id": "CgtmbXNpb3RjbG91ZA=="
+    },
+    "visibility": {
+      "rights": [
+        "RIGHT_APPLICATION_TRAFFIC_READ"
+      ]
+    },
+    "unique_id": "01JPB2A113JRQ145CH6RT7MCRV"
+  },
+  {
+    "name": "ns.up.join.process",
+    "time": "2025-03-14T19:32:41.563597608Z",
+    "identifiers": [
+      {
+        "device_ids": {
+          "device_id": "dmx-41b2",
+          "application_ids": {
+            "application_id": "fms-demo-smart-office"
+          },
+          "dev_eui": "70B3D57ED80041B2",
+          "join_eui": "0000000000000001"
+        }
+      }
+    ],
+    "data": {
+      "@type": "type.googleapis.com/ttn.lorawan.v3.UplinkMessage",
+      "raw_payload": "AAEAAAAAAAAAskEA2H7Vs3AAANhwVyQ=",
+      "payload": {
+        "m_hdr": {},
+        "mic": "2HBXJA==",
+        "join_request_payload": {
+          "join_eui": "0000000000000001",
+          "dev_eui": "70B3D57ED80041B2",
+          "dev_nonce": "0000"
+        }
+      },
+      "settings": {
+        "data_rate": {
+          "lora": {
+            "bandwidth": 125000,
+            "spreading_factor": 10,
+            "coding_rate": "4/5"
+          }
+        },
+        "frequency": "903900000",
+        "timestamp": 1647236036,
+        "time": "2025-03-14T19:32:41.313823Z"
+      },
+      "rx_metadata": [
+        {
+          "gateway_ids": {
+            "gateway_id": "henkecove",
+            "eui": "A84041FFFF205BD4"
+          },
+          "time": "2025-03-14T19:32:41.313823Z",
+          "timestamp": 1647236036,
+          "rssi": -115,
+          "channel_rssi": -115,
+          "snr": -6,
+          "uplink_token": "ChcKFQoJaGVua2Vjb3ZlEgioQEH//yBb1BDEp7uRBhoMCNmI0r4GEJ/ksqgBIKDrrLf4p1Y=",
+          "received_at": "2025-03-14T19:32:41.319478764Z"
+        }
+      ],
+      "received_at": "2025-03-14T19:32:41.354025404Z",
+      "correlation_ids": [
+        "gs:uplink:01JPB29Z89T88A4KV3JNNPRV3V"
+      ],
+      "device_channel_index": 8,
+      "consumed_airtime": "0.370688s"
+    },
+    "correlation_ids": [
+      "gs:uplink:01JPB29Z89T88A4KV3JNNPRV3V"
+    ],
+    "origin": "ip-10-22-13-199.us-west-1.compute.internal",
+    "context": {
+      "tenant-id": "CgtmbXNpb3RjbG91ZA=="
+    },
+    "visibility": {
+      "rights": [
+        "RIGHT_APPLICATION_TRAFFIC_READ"
+      ]
+    },
+    "unique_id": "01JPB29ZEV6GVQKVNMJ4BTR3YP"
+  },
+  {
+    "name": "js.join.accept",
+    "time": "2025-03-14T19:32:41.370886473Z",
+    "identifiers": [
+      {
+        "device_ids": {
+          "device_id": "dmx-41b2",
+          "application_ids": {
+            "application_id": "fms-demo-smart-office"
+          },
+          "dev_eui": "70B3D57ED80041B2",
+          "join_eui": "0000000000000001",
+          "dev_addr": "27FD4834"
+        }
+      }
+    ],
+    "origin": "ip-10-22-13-45.us-west-1.compute.internal",
+    "context": {
+      "tenant-id": "CgtmbXNpb3RjbG91ZA=="
+    },
+    "visibility": {
+      "rights": [
+        "RIGHT_APPLICATION_TRAFFIC_READ"
+      ]
+    },
+    "unique_id": "01JPB29Z8TBZVM0WPXVAVVW8A0"
+  },
+  {
+    "time": "2025-03-14T19:32:16.765Z",
+    "name": "synthetic.status.cleared",
+    "isError": false,
+    "isSynthetic": true,
+    "unique_id": "synthetic.1741980736765"
+  }
+]

@@ -543,7 +543,7 @@ void DmxController::testAllFixtures() {
                 Serial.print("GREEN");
             } else if (b > 0) {
                 Serial.print("BLUE");
-            } else {
+    } else {
                 Serial.print("OFF");
             }
             
