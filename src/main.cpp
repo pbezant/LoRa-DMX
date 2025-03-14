@@ -4,6 +4,8 @@
  * This program tests DMX initialization with simple error handling
  * Updated to work with esp_dmx 4.1.0
  * Converted to 4-channel RGBW mode (removed strobe channel)
+ * Refactored to support a variable number of fixtures
+ * Refactored DMX functionality into DmxController library
  */
 
 #include <Arduino.h>
@@ -21,11 +23,13 @@
 #define DMX_RX_PIN 20  // RX pin for DMX
 #define DMX_DIR_PIN 5  // DIR pin for DMX (connect to both DE and RE on MAX485)
 
+// FIXTURE CONFIGURATION
+#define NUM_FIXTURES 2  // Number of DMX fixtures to control (can be changed)
+#define CHANNELS_PER_FIXTURE 4  // Using 4-channel RGBW mode
+
 // FIXTURE 1 CONFIGURATION
 #define FIXTURE1_NAME "Light 1"
 #define FIXTURE1_START_ADDR 1  // First fixture starts at channel 1
-
-// Direct 4-channel light configuration for fixture 1
 #define FIXTURE1_RED_CHANNEL 1     // Red dimmer
 #define FIXTURE1_GREEN_CHANNEL 2   // Green dimmer
 #define FIXTURE1_BLUE_CHANNEL 3    // Blue dimmer
@@ -34,18 +38,15 @@
 // FIXTURE 2 CONFIGURATION
 #define FIXTURE2_NAME "Light 2"
 #define FIXTURE2_START_ADDR 5  // Second fixture starts at channel 5 (right after fixture 1)
-
-// Direct 4-channel light configuration for fixture 2
 #define FIXTURE2_RED_CHANNEL 5     // Red dimmer
 #define FIXTURE2_GREEN_CHANNEL 6   // Green dimmer
 #define FIXTURE2_BLUE_CHANNEL 7    // Blue dimmer
 #define FIXTURE2_WHITE_CHANNEL 8   // White dimmer
 
-// FIXTURE 2 ADDRESS SCAN - Quickly sweep through possible addresses to find fixture 2
-// Only test every 4 channels as that's the fixture size
+// ADDRESS SCAN CONFIGURATION
 #define SCAN_START_ADDR 1
-#define SCAN_END_ADDR 61   // Check addresses 1, 5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61
-#define SCAN_STEP 4
+#define SCAN_END_ADDR 61   // Check addresses at CHANNELS_PER_FIXTURE intervals
+#define SCAN_STEP CHANNELS_PER_FIXTURE
 
 // Common settings
 #define MAX_BRIGHTNESS 255        // Maximum brightness (0-255)
@@ -53,44 +54,6 @@
 // Global variables
 bool dmxInitialized = false;
 DmxController* dmx = NULL;
-
-// Forward declarations
-void blinkLED(int times, int delayMs);
-void printFixtureValues();
-void testAllChannels();
-void testBothFixtures();
-void scanForFixture2();
-void setFixtureColor(int fixtureNum, uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0);
-void setManualFixtureColor(int startAddr, uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0);
-
-// Define a more complete fixture configuration
-struct FixtureConfig {
-  const char* name;
-  int startAddr;
-  int redChannel;
-  int greenChannel;
-  int blueChannel;
-  int whiteChannel;
-};
-
-// Fixture configurations
-const FixtureConfig fixture1 = {
-  FIXTURE1_NAME,
-  FIXTURE1_START_ADDR,
-  FIXTURE1_RED_CHANNEL,
-  FIXTURE1_GREEN_CHANNEL,
-  FIXTURE1_BLUE_CHANNEL,
-  FIXTURE1_WHITE_CHANNEL
-};
-
-const FixtureConfig fixture2 = {
-  FIXTURE2_NAME,
-  FIXTURE2_START_ADDR,
-  FIXTURE2_RED_CHANNEL,
-  FIXTURE2_GREEN_CHANNEL,
-  FIXTURE2_BLUE_CHANNEL,
-  FIXTURE2_WHITE_CHANNEL
-};
 
 void setup() {
   // Initialize serial first
@@ -100,12 +63,8 @@ void setup() {
   // Set up LED pin
   pinMode(LED_PIN, OUTPUT);
   
-  // Set the DIR pin high to enable transmit mode on MAX485
-  pinMode(DMX_DIR_PIN, OUTPUT);
-  digitalWrite(DMX_DIR_PIN, HIGH);  // Set HIGH for transmit mode
-  
   // Initial blink to indicate we're alive
-  blinkLED(2, 500);
+  DmxController::blinkLED(LED_PIN, 2, 500);
   
   // Print startup message with delay between lines to ensure complete transmission
   Serial.println("\n\n===== DMX Test Program =====");
@@ -152,52 +111,23 @@ void setup() {
     delay(100);
   } catch (...) {
     Serial.println("ERROR: Failed to create DMX controller object");
-    blinkLED(5, 100);  // Error indicator
+    DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
     dmx = NULL;
     return;
   }
   
-  // Print DMX configuration
-  Serial.println("DMX Configuration:");
-  delay(100);
-  Serial.print("DMX Port: ");
-  Serial.println(DMX_PORT);
-  delay(100);
+  // Initialize fixtures
+  dmx->initializeFixtures(NUM_FIXTURES, CHANNELS_PER_FIXTURE);
   
-  // Print fixture configuration
-  Serial.println("\nFixture 1 Configuration (4-channel RGBW):");
-  Serial.print("Name: ");
-  Serial.println(fixture1.name);
-  Serial.print("Start Address: ");
-  Serial.println(fixture1.startAddr);
-  Serial.print("R: Ch");
-  Serial.print(fixture1.redChannel);
-  Serial.print(", G: Ch");
-  Serial.print(fixture1.greenChannel);
-  Serial.print(", B: Ch");
-  Serial.print(fixture1.blueChannel);
-  Serial.print(", W: Ch");
-  Serial.println(fixture1.whiteChannel);
-  
-  Serial.println("\nFixture 2 Configuration (4-channel RGBW):");
-  Serial.print("Name: ");
-  Serial.println(fixture2.name);
-  Serial.print("Start Address: ");
-  Serial.println(fixture2.startAddr);
-  Serial.print("R: Ch");
-  Serial.print(fixture2.redChannel);
-  Serial.print(", G: Ch");
-  Serial.print(fixture2.greenChannel);
-  Serial.print(", B: Ch");
-  Serial.print(fixture2.blueChannel);
-  Serial.print(", W: Ch");
-  Serial.println(fixture2.whiteChannel);
-  
-  Serial.println("\nTROUBLESHOOTING: Added address scan mode (test mode 5) to help find fixture 2");
-  Serial.println("If fixture 2 isn't responding, it may be set to a different DMX address.");
-  Serial.println("Test mode 5 will cycle through possible addresses (1, 5, 9, 13, 17, 21, 25, etc.)");
-  Serial.println("When you see fixture 2 respond, note the address and update FIXTURE2_START_ADDR in the code.");
-  delay(100);
+  // Configure fixture 1
+  dmx->setFixtureConfig(0, FIXTURE1_NAME, FIXTURE1_START_ADDR, 
+                        FIXTURE1_RED_CHANNEL, FIXTURE1_GREEN_CHANNEL, 
+                        FIXTURE1_BLUE_CHANNEL, FIXTURE1_WHITE_CHANNEL);
+                        
+  // Configure fixture 2
+  dmx->setFixtureConfig(1, FIXTURE2_NAME, FIXTURE2_START_ADDR, 
+                        FIXTURE2_RED_CHANNEL, FIXTURE2_GREEN_CHANNEL, 
+                        FIXTURE2_BLUE_CHANNEL, FIXTURE2_WHITE_CHANNEL);
   
   // Initialize DMX with error handling
   Serial.println("\nInitializing DMX controller...");
@@ -218,7 +148,7 @@ void setup() {
     } catch (...) {
       Serial.println("ERROR: Exception during DMX initialization!");
       delay(100);
-      blinkLED(5, 100);  // Error indicator
+      DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
     }
   }
   
@@ -232,7 +162,7 @@ void setup() {
   
   // Indicate completion with LED
   if (dmxInitialized) {
-    blinkLED(2, 500);  // Success indicator
+    DmxController::blinkLED(LED_PIN, 2, 500);  // Success indicator
     
     // Ask the user if they want to run a channel test
     Serial.println("\nDo you want to run a channel test to identify the correct channels?");
@@ -245,7 +175,7 @@ void setup() {
         char input = Serial.read();
         if (input == 'y' || input == 'Y') {
           Serial.println("Running channel test sequence...");
-          testAllChannels();
+          dmx->testAllChannels();
           break;
         } else {
           Serial.println("Skipping channel test.");
@@ -260,18 +190,18 @@ void setup() {
       Serial.println("No input received, skipping channel test.");
     }
     
-    // Now run a test for both fixtures to verify our configuration
-    Serial.println("Testing both fixtures with new 4-channel RGBW configuration...");
-    testBothFixtures();
+    // Now run a test for all fixtures to verify our configuration
+    Serial.println("Testing all fixtures with 4-channel RGBW configuration...");
+    dmx->testAllFixtures();
     
     // Special message about the address scanner
-    Serial.println("\n========= FIXTURE 2 TROUBLESHOOTING =========");
-    Serial.println("If fixture 2 isn't responding, wait for test mode 5 (address scanner)");
+    Serial.println("\n========= FIXTURE TROUBLESHOOTING =========");
+    Serial.println("If fixtures aren't responding, wait for test mode 5 (address scanner)");
     Serial.println("The scanner will try different addresses every few seconds.");
-    Serial.println("Watch for fixture 2 to light up, and note the address shown in the serial monitor.");
+    Serial.println("Watch for fixtures to light up, and note the address shown in the serial monitor.");
     Serial.println("=======================================");
   } else {
-    blinkLED(10, 100);  // Error indicator
+    DmxController::blinkLED(LED_PIN, 10, 100);  // Error indicator
   }
 }
 
@@ -285,7 +215,7 @@ void loop() {
     try {
       // Every 10 cycles, change the test mode
       if (counter % 10 == 0) {
-        testMode = (testMode + 1) % 6;  // Now 6 test modes (removed strobe mode)
+        testMode = (testMode + 1) % 6;  // 6 test modes
         Serial.print("Switching to test mode ");
         Serial.println(testMode);
       }
@@ -299,25 +229,39 @@ void loop() {
           // Mode 0: Alternate Fixture 1 between red and blue
           if (counter % 2 == 0) {
             // RED on fixture 1
-            setFixtureColor(1, 255, 0, 0);
-            Serial.println("Setting Fixture 1 to RED (Ch1)");
+            dmx->setFixtureColor(0, 255, 0, 0);
+            Serial.print("Setting Fixture 1 to RED (Ch");
+            Serial.print(dmx->getFixture(0)->redChannel);
+            Serial.println(")");
           } else {
             // BLUE on fixture 1
-            setFixtureColor(1, 0, 0, 255);
-            Serial.println("Setting Fixture 1 to BLUE (Ch3)");
+            dmx->setFixtureColor(0, 0, 0, 255);
+            Serial.print("Setting Fixture 1 to BLUE (Ch");
+            Serial.print(dmx->getFixture(0)->blueChannel);
+            Serial.println(")");
           }
           break;
           
         case 1:
-          // Mode 1: Alternate Fixture 2 between red and blue
-          if (counter % 2 == 0) {
-            // RED on fixture 2
-            setFixtureColor(2, 255, 0, 0);
-            Serial.println("Setting Fixture 2 to RED (Ch5)");
+          // Mode 1: If there's at least 2 fixtures, alternate Fixture 2 between red and blue
+          if (dmx->getNumFixtures() >= 2) {
+            if (counter % 2 == 0) {
+              // RED on fixture 2
+              dmx->setFixtureColor(1, 255, 0, 0);
+              Serial.print("Setting Fixture 2 to RED (Ch");
+              Serial.print(dmx->getFixture(1)->redChannel);
+              Serial.println(")");
+            } else {
+              // BLUE on fixture 2
+              dmx->setFixtureColor(1, 0, 0, 255);
+              Serial.print("Setting Fixture 2 to BLUE (Ch");
+              Serial.print(dmx->getFixture(1)->blueChannel);
+              Serial.println(")");
+            }
           } else {
-            // BLUE on fixture 2
-            setFixtureColor(2, 0, 0, 255);
-            Serial.println("Setting Fixture 2 to BLUE (Ch7)");
+            // If there's only one fixture, do something with it
+            dmx->setFixtureColor(0, 0, 255, 0); // GREEN on fixture 1
+            Serial.println("Only one fixture configured - setting Fixture 1 to GREEN");
           }
           break;
           
@@ -325,47 +269,75 @@ void loop() {
           // Mode 2: Cycle through RGB on fixture 1
           switch (counter % 3) {
             case 0:
-              setFixtureColor(1, 255, 0, 0);
-              Serial.println("Setting Fixture 1 to RED (Ch1)");
+              dmx->setFixtureColor(0, 255, 0, 0);
+              Serial.print("Setting Fixture 1 to RED (Ch");
+              Serial.print(dmx->getFixture(0)->redChannel);
+              Serial.println(")");
               break;
             case 1:
-              setFixtureColor(1, 0, 255, 0);
-              Serial.println("Setting Fixture 1 to GREEN (Ch2)");
+              dmx->setFixtureColor(0, 0, 255, 0);
+              Serial.print("Setting Fixture 1 to GREEN (Ch");
+              Serial.print(dmx->getFixture(0)->greenChannel);
+              Serial.println(")");
               break;
             case 2:
-              setFixtureColor(1, 0, 0, 255);
-              Serial.println("Setting Fixture 1 to BLUE (Ch3)");
+              dmx->setFixtureColor(0, 0, 0, 255);
+              Serial.print("Setting Fixture 1 to BLUE (Ch");
+              Serial.print(dmx->getFixture(0)->blueChannel);
+              Serial.println(")");
               break;
           }
           break;
           
         case 3:
-          // Mode 3: Both fixtures to WHITE
-          // Set both fixtures to white using all RGB and White
-          setFixtureColor(1, 255, 255, 255, 255);
-          setFixtureColor(2, 255, 255, 255, 255);
-          Serial.println("Setting BOTH fixtures to WHITE (RGBW)");
+          // Mode 3: All fixtures to WHITE
+          Serial.println("Setting ALL fixtures to WHITE (RGBW)");
+          for (int i = 0; i < dmx->getNumFixtures(); i++) {
+            dmx->setFixtureColor(i, 255, 255, 255, 255);
+          }
           break;
           
         case 4:
-          // Mode 4: Complementary colors
-          if (counter % 2 == 0) {
-            // Fixture 1 RED, Fixture 2 CYAN
-            setFixtureColor(1, 255, 0, 0);
-            setFixtureColor(2, 0, 255, 255);
-            Serial.println("Setting Fixture 1 to RED (Ch1), Fixture 2 to CYAN (Ch6+7)");
+          // Mode 4: Complementary colors if there are at least 2 fixtures
+          if (dmx->getNumFixtures() >= 2) {
+            if (counter % 2 == 0) {
+              // Fixture 1 RED, Fixture 2 CYAN
+              dmx->setFixtureColor(0, 255, 0, 0);
+              dmx->setFixtureColor(1, 0, 255, 255);
+              Serial.print("Setting Fixture 1 to RED (Ch");
+              Serial.print(dmx->getFixture(0)->redChannel);
+              Serial.print("), Fixture 2 to CYAN (Ch");
+              Serial.print(dmx->getFixture(1)->greenChannel);
+              Serial.print("+Ch");
+              Serial.print(dmx->getFixture(1)->blueChannel);
+              Serial.println(")");
+            } else {
+              // Fixture 1 GREEN, Fixture 2 MAGENTA
+              dmx->setFixtureColor(0, 0, 255, 0);
+              dmx->setFixtureColor(1, 255, 0, 255);
+              Serial.print("Setting Fixture 1 to GREEN (Ch");
+              Serial.print(dmx->getFixture(0)->greenChannel);
+              Serial.print("), Fixture 2 to MAGENTA (Ch");
+              Serial.print(dmx->getFixture(1)->redChannel);
+              Serial.print("+Ch");
+              Serial.print(dmx->getFixture(1)->blueChannel);
+              Serial.println(")");
+            }
           } else {
-            // Fixture 1 GREEN, Fixture 2 MAGENTA
-            setFixtureColor(1, 0, 255, 0);
-            setFixtureColor(2, 255, 0, 255);
-            Serial.println("Setting Fixture 1 to GREEN (Ch2), Fixture 2 to MAGENTA (Ch5+7)");
+            // If only one fixture, alternate colors
+            if (counter % 2 == 0) {
+              dmx->setFixtureColor(0, 255, 255, 0); // YELLOW
+              Serial.println("Only one fixture - setting to YELLOW");
+            } else {
+              dmx->setFixtureColor(0, 0, 255, 255); // CYAN
+              Serial.println("Only one fixture - setting to CYAN");
+            }
           }
           break;
           
         case 5:
-          // Mode 5: Address scan for fixture 2
-          // This mode tries different possible starting addresses to find fixture 2
-          scanForFixture2();
+          // Mode 5: Address scan to help find fixtures
+          dmx->scanForFixtures(SCAN_START_ADDR, SCAN_END_ADDR, SCAN_STEP);
           break;
       }
       
@@ -373,7 +345,7 @@ void loop() {
       dmx->sendData();
       
       // Print diagnostic information
-      printFixtureValues();
+      dmx->printFixtureValues();
       
       // Blink the onboard LED to show we're running
       digitalWrite(LED_PIN, (counter % 2) ? HIGH : LOW);
@@ -392,316 +364,5 @@ void loop() {
     delay(900);
   }
   
-  delay(5000);  // Slowed down to 5 seconds per step (was 1 second)
-}
-
-// Helper function to scan through possible DMX addresses for fixture 2
-void scanForFixture2() {
-  static int currentAddr = SCAN_START_ADDR;
-  static int currentColor = 0;
-  
-  // Always keep fixture 1 on with RED to have a reference
-  setFixtureColor(1, 255, 0, 0);
-  
-  // Set 4-channel fixture values at the current test address
-  // First clear any old values
-  for (int i = 1; i <= 512; i++) {
-    if (i < FIXTURE1_START_ADDR || i > FIXTURE1_WHITE_CHANNEL) {  // Skip fixture 1 addresses
-      dmx->getDmxData()[i] = 0;
-    }
-  }
-  
-  // Set colors
-  uint8_t r = 0, g = 0, b = 0;
-  switch (currentColor) {
-    case 0: r = 255; break; // RED
-    case 1: g = 255; break; // GREEN
-    case 2: b = 255; break; // BLUE
-  }
-  
-  // Set color at test address
-  setManualFixtureColor(currentAddr, r, g, b);
-  
-  // Print debug info
-  Serial.print("FIXTURE 2 SCAN - Testing address ");
-  Serial.print(currentAddr);
-  Serial.print(" with ");
-  Serial.print(currentColor == 0 ? "RED" : (currentColor == 1 ? "GREEN" : "BLUE"));
-  Serial.println(" - Watch for fixture 2 response");
-  Serial.println("This test will run for 5 seconds...");
-  
-  // Update for next cycle
-  currentColor = (currentColor + 1) % 3;
-  if (currentColor == 0) {
-    currentAddr += SCAN_STEP;
-    if (currentAddr > SCAN_END_ADDR) {
-      currentAddr = SCAN_START_ADDR;
-    }
-  }
-}
-
-// Helper function to set a fixture's color with direct RGBW handling at any address
-void setManualFixtureColor(int startAddr, uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
-  // Set RGBW values directly to channels starting at startAddr
-  dmx->getDmxData()[startAddr] = r;     // Red channel
-  dmx->getDmxData()[startAddr + 1] = g; // Green channel
-  dmx->getDmxData()[startAddr + 2] = b; // Blue channel
-  dmx->getDmxData()[startAddr + 3] = w; // White channel
-}
-
-// Helper function to set a fixture's color with direct RGBW handling
-void setFixtureColor(int fixtureNum, uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
-  const FixtureConfig* fixture = (fixtureNum == 1) ? &fixture1 : &fixture2;
-  
-  // Set RGBW values directly to their respective channels
-  dmx->getDmxData()[fixture->redChannel] = r;
-  dmx->getDmxData()[fixture->greenChannel] = g;
-  dmx->getDmxData()[fixture->blueChannel] = b;
-  dmx->getDmxData()[fixture->whiteChannel] = w;
-}
-
-// Helper function to blink the LED a specific number of times
-void blinkLED(int times, int delayMs) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(LED_PIN, HIGH);
-    delay(delayMs);
-    digitalWrite(LED_PIN, LOW);
-    delay(delayMs);
-  }
-}
-
-// Helper function to print fixture values
-void printFixtureValues() {
-  // Print the first 8 DMX channels for debugging (covers both fixtures)
-  Serial.print("DMX Data: [0]=");
-  Serial.print(dmx->getDmxData()[0]);  // Start code (should be 0)
-  
-  for (int i = 1; i <= 8; i++) {
-    Serial.print(", [");
-    Serial.print(i);
-    Serial.print("]=");
-    Serial.print(dmx->getDmxData()[i]);
-  }
-  Serial.println();
-  
-  // Print fixture 1 RGBW info
-  Serial.print(fixture1.name);
-  Serial.print(": R=");
-  Serial.print(dmx->getDmxData()[fixture1.redChannel]);
-  Serial.print(", G=");
-  Serial.print(dmx->getDmxData()[fixture1.greenChannel]);
-  Serial.print(", B=");
-  Serial.print(dmx->getDmxData()[fixture1.blueChannel]);
-  Serial.print(", W=");
-  Serial.println(dmx->getDmxData()[fixture1.whiteChannel]);
-  
-  // Print fixture 2 RGBW info
-  Serial.print(fixture2.name);
-  Serial.print(": R=");
-  Serial.print(dmx->getDmxData()[fixture2.redChannel]);
-  Serial.print(", G=");
-  Serial.print(dmx->getDmxData()[fixture2.greenChannel]);
-  Serial.print(", B=");
-  Serial.print(dmx->getDmxData()[fixture2.blueChannel]);
-  Serial.print(", W=");
-  Serial.println(dmx->getDmxData()[fixture2.whiteChannel]);
-}
-
-// Run a channel test at startup to help identify the correct channels
-void testAllChannels() {
-  Serial.println("Starting channel test sequence...");
-  
-  // Test each channel individually
-  for (int channel = 1; channel <= 8; channel++) {  // Now just testing 8 channels for both fixtures
-    // Clear all channels
-    dmx->clearAllChannels();
-    
-    // Set this channel to maximum
-    dmx->getDmxData()[channel] = 255;
-    
-    // Send the data
-    dmx->sendData();
-    
-    // Print diagnostic information
-    Serial.print("Testing DMX channel ");
-    Serial.print(channel);
-    Serial.println(" - set to 255");
-    
-    // Channel interpretation help
-    if (channel == fixture1.redChannel) {
-      Serial.println("  This is Fixture 1 Red Channel");
-    } else if (channel == fixture1.greenChannel) {
-      Serial.println("  This is Fixture 1 Green Channel");
-    } else if (channel == fixture1.blueChannel) {
-      Serial.println("  This is Fixture 1 Blue Channel");
-    } else if (channel == fixture1.whiteChannel) {
-      Serial.println("  This is Fixture 1 White Channel");
-    } else if (channel == fixture2.redChannel) {
-      Serial.println("  This is Fixture 2 Red Channel");
-    } else if (channel == fixture2.greenChannel) {
-      Serial.println("  This is Fixture 2 Green Channel");
-    } else if (channel == fixture2.blueChannel) {
-      Serial.println("  This is Fixture 2 Blue Channel");
-    } else if (channel == fixture2.whiteChannel) {
-      Serial.println("  This is Fixture 2 White Channel");
-    }
-    
-    // User feedback prompt
-    Serial.println("What effect do you see? (Type a description and press Enter)");
-    
-    // Wait for user input or timeout after 3 seconds
-    unsigned long startTime = millis();
-    String response = "";
-    while (millis() - startTime < 3000) {
-      if (Serial.available() > 0) {
-        char c = Serial.read();
-        if (c == '\n' || c == '\r') {
-          break;  // End of input
-        }
-        response += c;
-      }
-      delay(10);
-    }
-    
-    // If we got a response, print it
-    if (response.length() > 0) {
-      Serial.print("Channel ");
-      Serial.print(channel);
-      Serial.print(" response: ");
-      Serial.println(response);
-    }
-    
-    // Small delay before next channel
-    delay(1000);
-  }
-  
-  // Turn all channels off at the end
-  dmx->clearAllChannels();
-  dmx->sendData();
-  Serial.println("Channel test complete, all channels cleared");
-}
-
-// Test both fixtures with the new configuration
-void testBothFixtures() {
-  Serial.println("Testing both fixtures with 4-channel RGBW configuration...");
-  Serial.println("Channel mapping: Ch1/5=Red, Ch2/6=Green, Ch3/7=Blue, Ch4/8=White");
-  Serial.println("Tests slowed down to 8 seconds per step");
-  
-  // TestStep struct with exactly 9 fields total (string + 8 uint8_t values)
-  struct TestStep {
-    const char* description; // 1 field (string)
-    uint8_t f1r;            // 2
-    uint8_t f1g;            // 3
-    uint8_t f1b;            // 4
-    uint8_t f1w;            // 5
-    uint8_t f2r;            // 6
-    uint8_t f2g;            // 7
-    uint8_t f2b;            // 8
-    uint8_t f2w;            // 9
-  };
-  
-  // Each initializer must have exactly 9 values (matching the 9 fields above)
-  TestStep testSteps[] = {
-    // Format: {description, f1r, f1g, f1b, f1w, f2r, f2g, f2b, f2w}
-    {"Both fixtures RED",             255, 0,   0,   0,   255, 0,   0,   0},
-    {"Both fixtures GREEN",           0,   255, 0,   0,   0,   255, 0,   0},
-    {"Both fixtures BLUE",            0,   0,   255, 0,   0,   0,   255, 0},
-    {"Both fixtures WHITE (W only)",  0,   0,   0,   255, 0,   0,   0,   255},
-    {"Both fixtures WHITE (RGB)",     255, 255, 255, 0,   255, 255, 255, 0},
-    {"Both fixtures WHITE (RGBW)",    255, 255, 255, 255, 255, 255, 255, 255},
-    {"Fixture 1 RED, Fixture 2 GREEN",255, 0,   0,   0,   0,   255, 0,   0},
-    {"Fixture 1 GREEN, Fixture 2 BLUE",0,  255, 0,   0,   0,   0,   255, 0},
-    {"Fixture 1 BLUE, Fixture 2 RED", 0,   0,   255, 0,   255, 0,   0,   0},
-    {"Half brightness test",          128, 128, 128, 0,   128, 128, 128, 0},
-    {"All channels OFF",              0,   0,   0,   0,   0,   0,   0,   0}
-  };
-  
-  int numSteps = sizeof(testSteps) / sizeof(TestStep);
-  
-  for (int i = 0; i < numSteps; i++) {
-    // Clear all channels
-    dmx->clearAllChannels();
-    
-    // Set up fixture 1
-    dmx->getDmxData()[fixture1.redChannel] = testSteps[i].f1r;
-    dmx->getDmxData()[fixture1.greenChannel] = testSteps[i].f1g;
-    dmx->getDmxData()[fixture1.blueChannel] = testSteps[i].f1b;
-    dmx->getDmxData()[fixture1.whiteChannel] = testSteps[i].f1w;
-    
-    // Set up fixture 2
-    dmx->getDmxData()[fixture2.redChannel] = testSteps[i].f2r;
-    dmx->getDmxData()[fixture2.greenChannel] = testSteps[i].f2g;
-    dmx->getDmxData()[fixture2.blueChannel] = testSteps[i].f2b;
-    dmx->getDmxData()[fixture2.whiteChannel] = testSteps[i].f2w;
-    
-    // Send the data
-    dmx->sendData();
-    
-    // Print information
-    Serial.print("Test step ");
-    Serial.print(i+1);
-    Serial.print("/");
-    Serial.print(numSteps);
-    Serial.print(": ");
-    Serial.println(testSteps[i].description);
-    Serial.print("Test will run for 8 seconds...");
-    
-    // Explain what colors we should actually see based on the channel mapping
-    Serial.print("Expected colors - ");
-    
-    // Describe what fixture 1 should show based on actual channel mapping
-    Serial.print("Fixture 1: ");
-    if (dmx->getDmxData()[fixture1.whiteChannel] > 0 ||
-        (dmx->getDmxData()[fixture1.redChannel] > 0 && 
-         dmx->getDmxData()[fixture1.greenChannel] > 0 && 
-         dmx->getDmxData()[fixture1.blueChannel] > 0)) {
-      Serial.print("WHITE");
-    } else if (dmx->getDmxData()[fixture1.redChannel] > 0 && dmx->getDmxData()[fixture1.greenChannel] > 0) {
-      Serial.print("YELLOW");
-    } else if (dmx->getDmxData()[fixture1.redChannel] > 0 && dmx->getDmxData()[fixture1.blueChannel] > 0) {
-      Serial.print("MAGENTA");
-    } else if (dmx->getDmxData()[fixture1.greenChannel] > 0 && dmx->getDmxData()[fixture1.blueChannel] > 0) {
-      Serial.print("CYAN");
-    } else if (dmx->getDmxData()[fixture1.redChannel] > 0) {
-      Serial.print("RED");
-    } else if (dmx->getDmxData()[fixture1.greenChannel] > 0) {
-      Serial.print("GREEN");
-    } else if (dmx->getDmxData()[fixture1.blueChannel] > 0) {
-      Serial.print("BLUE");
-    } else {
-      Serial.print("OFF");
-    }
-    
-    // Describe what fixture 2 should show based on actual channel mapping
-    Serial.print(", Fixture 2: ");
-    if (dmx->getDmxData()[fixture2.whiteChannel] > 0 ||
-        (dmx->getDmxData()[fixture2.redChannel] > 0 && 
-         dmx->getDmxData()[fixture2.greenChannel] > 0 && 
-         dmx->getDmxData()[fixture2.blueChannel] > 0)) {
-      Serial.print("WHITE");
-    } else if (dmx->getDmxData()[fixture2.redChannel] > 0 && dmx->getDmxData()[fixture2.greenChannel] > 0) {
-      Serial.print("YELLOW");
-    } else if (dmx->getDmxData()[fixture2.redChannel] > 0 && dmx->getDmxData()[fixture2.blueChannel] > 0) {
-      Serial.print("MAGENTA");
-    } else if (dmx->getDmxData()[fixture2.greenChannel] > 0 && dmx->getDmxData()[fixture2.blueChannel] > 0) {
-      Serial.print("CYAN");
-    } else if (dmx->getDmxData()[fixture2.redChannel] > 0) {
-      Serial.print("RED");
-    } else if (dmx->getDmxData()[fixture2.greenChannel] > 0) {
-      Serial.print("GREEN");
-    } else if (dmx->getDmxData()[fixture2.blueChannel] > 0) {
-      Serial.print("BLUE");
-    } else {
-      Serial.print("OFF");
-    }
-    
-    Serial.println();
-    
-    printFixtureValues();
-    
-    // Wait for visual confirmation
-    delay(8000);  // Slowed down to 8 seconds per step (was 2 seconds)
-  }
-  
-  Serial.println("Fixture test complete!");
+  delay(5000);  // Slowed down to 5 seconds per step
 }

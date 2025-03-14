@@ -1,7 +1,7 @@
 /**
  * DmxController.h - A library for controlling DMX fixtures with ESP32
  * 
- * This library provides functionality for controlling RGB DMX fixtures,
+ * This library provides functionality for controlling RGBW DMX fixtures,
  * including setup, color control, and data transmission.
  * 
  * Compatible with esp_dmx 4.1.0 and newer
@@ -18,12 +18,27 @@
 #define DMX_INTR_FLAGS_DEFAULT (0)
 #endif
 
-// DMX color values
-typedef struct {
+// DMX configuration
+#define DMX_PACKET_SIZE 513  // DMX packet size (512 channels + start code)
+#define DMX_TIMEOUT_TICK 100 // Timeout for DMX operations
+
+// Fixture configuration structure
+struct FixtureConfig {
+  const char* name;
+  int startAddr;
+  int redChannel;
+  int greenChannel;
+  int blueChannel;
+  int whiteChannel;
+};
+
+// Simple color structure for RGBW
+struct RgbwColor {
   uint8_t r;
   uint8_t g;
   uint8_t b;
-} Color;
+  uint8_t w;
+};
 
 class DmxController {
 public:
@@ -48,12 +63,51 @@ public:
     void begin();
 
     /**
-     * Set a fixture's RGB color
+     * Set a fixture's color with direct RGBW handling
      * 
-     * @param address The DMX address of the fixture
-     * @param color The RGB color to set
+     * @param fixtureIndex Index of the fixture in the fixtures array
+     * @param r Red value (0-255)
+     * @param g Green value (0-255)
+     * @param b Blue value (0-255)
+     * @param w White value (0-255), defaults to 0
      */
-    void setFixtureColor(int address, Color color);
+    void setFixtureColor(int fixtureIndex, uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0);
+
+    /**
+     * Set a fixture's color with direct RGBW handling at any address
+     * 
+     * @param startAddr Starting DMX address
+     * @param r Red value (0-255)
+     * @param g Green value (0-255)
+     * @param b Blue value (0-255)
+     * @param w White value (0-255), defaults to 0
+     */
+    void setManualFixtureColor(int startAddr, uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0);
+
+    /**
+     * Initialize the fixtures array with default values
+     */
+    void initializeFixtures(int numFixtures, int channelsPerFixture);
+
+    /**
+     * Scan through possible DMX addresses for fixtures
+     */
+    void scanForFixtures(int scanStartAddr, int scanEndAddr, int scanStep);
+
+    /**
+     * Run a channel test sequence to help identify fixture channels
+     */
+    void testAllChannels();
+
+    /**
+     * Test all fixtures with a series of color patterns
+     */
+    void testAllFixtures();
+
+    /**
+     * Print all fixture values for debug
+     */
+    void printFixtureValues();
 
     /**
      * Send the current DMX data to the fixtures
@@ -61,85 +115,58 @@ public:
     void sendData();
 
     /**
-     * Get a debug-friendly string of current DMX values for a fixture
-     * 
-     * @param fixtureLabel The label to use for the fixture
-     * @param address The DMX address of the fixture
-     * @return A formatted string with the fixture's RGB values
-     */
-    String getDmxValueString(const String& fixtureLabel, int address);
-    
-    /**
      * Clear all DMX data (set all channels to 0)
      * Preserves the DMX start code (0 at index 0)
      */
     void clearAllChannels();
-    
+
     /**
-     * Log all DMX values for debugging
+     * Create and store a new fixture configuration
      * 
-     * @param fixture1Label Label for the first fixture
-     * @param fixture1Addr Address of the first fixture
-     * @param fixture2Label Label for the second fixture (optional)
-     * @param fixture2Addr Address of the second fixture (optional)
+     * @param index Index in fixtures array
+     * @param name Fixture name
+     * @param startAddr DMX start address
+     * @param rChan Red channel
+     * @param gChan Green channel
+     * @param bChan Blue channel
+     * @param wChan White channel
      */
-    void logDmxValues(const String& fixture1Label, int fixture1Addr, 
-                      const String& fixture2Label = "", int fixture2Addr = 0);
-    
+    void setFixtureConfig(int index, const char* name, int startAddr, 
+                         int rChan, int gChan, int bChan, int wChan);
+
     /**
-     * Convert HSV color to RGB color
-     * 
-     * @param h Hue (0.0 - 1.0)
-     * @param s Saturation (0.0 - 1.0)
-     * @param v Value (0.0 - 1.0)
-     * @param r Red output value (0.0 - 1.0)
-     * @param g Green output value (0.0 - 1.0)
-     * @param b Blue output value (0.0 - 1.0)
+     * Get the number of configured fixtures
      */
-    static void HSVtoRGB(float h, float s, float v, float &r, float &g, float &b);
-    
+    int getNumFixtures() { return _numFixtures; }
+
     /**
-     * Get standard colors array
-     * 
-     * @return Array of standard RGB colors
+     * Get the number of channels per fixture
      */
-    static Color* getStandardColors(int &numColors);
-    
+    int getChannelsPerFixture() { return _channelsPerFixture; }
+
     /**
      * Get the DMX data buffer
-     * 
-     * @return Pointer to the DMX data buffer
      */
     uint8_t* getDmxData() { return _dmxData; }
-    
+
     /**
-     * Set up color cycling for two fixtures
-     * 
-     * @param fixture1Addr Address of the first fixture
-     * @param fixture2Addr Address of the second fixture
-     * @param useStandardColors True to use standard colors, false for smooth HSV transitions
-     * @param colorIndex Current color index (will be incremented by this function)
-     * @param offset Color index offset for the second fixture
+     * Get a fixture configuration
      */
-    void cycleColors(int fixture1Addr, int fixture2Addr, bool useStandardColors, 
-                     int &colorIndex, int offset = 3);
-    
+    FixtureConfig* getFixture(int index);
+
     /**
-     * Update a fixture's color based on HSV values for smooth transitions
-     * 
-     * @param address The DMX address of the fixture
-     * @param hue Hue value (0.0 - 1.0)
+     * Get all fixtures
      */
-    void setFixtureColorHSV(int address, float hue, float saturation = 1.0, float value = 1.0);
-    
+    FixtureConfig* getAllFixtures() { return _fixtures; }
+
     /**
-     * Update multiple fixtures with the same color
+     * Helper function to blink an LED a specific number of times
      * 
-     * @param addresses Array of fixture addresses
-     * @param numFixtures Number of fixtures in the array
-     * @param color The RGB color to set for all fixtures
+     * @param ledPin Pin number for the LED
+     * @param times Number of times to blink
+     * @param delayMs Delay between blinks in milliseconds
      */
-    void setMultipleFixtureColors(const int addresses[], int numFixtures, Color color);
+    static void blinkLED(int ledPin, int times, int delayMs);
 
 private:
     uint8_t _dmxPort;
@@ -148,8 +175,13 @@ private:
     uint8_t _dirPin;
     uint8_t _dmxData[DMX_PACKET_SIZE];  // Array to hold DMX data
     
-    // Helper function to log a message (you'll need to provide your own implementation)
-    void logMessage(const String& message);
+    FixtureConfig* _fixtures;  // Dynamic array of fixture configurations
+    int _numFixtures;          // Number of fixtures
+    int _channelsPerFixture;   // Number of channels per fixture
+
+    // Internal counter for scanner function
+    int _scanCurrentAddr;
+    int _scanCurrentColor;
 };
 
 #endif // DMX_CONTROLLER_H 
