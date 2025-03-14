@@ -281,7 +281,7 @@ void setup() {
       Serial.println("LoRaWAN credentials set");
       
       // Register the downlink callback
-      // TODO: lora->setDownlinkCallback(handleDownlinkCallback);
+      lora->setDownlinkCallback(handleDownlinkCallback);
       Serial.println("Downlink callback registered");
       
       // Join network
@@ -291,7 +291,7 @@ void setup() {
         
         // Add delay to allow session establishment to complete
         Serial.println("Waiting for session establishment...");
-        delay(5000);  // 5 second delay after join
+        delay(7000);  // 7 second delay after join for more reliable session establishment
         
         loraInitialized = true;
         DmxController::blinkLED(LED_PIN, 3, 300);  // 3 blinks for successful join
@@ -365,6 +365,23 @@ void loop() {
       // Reset the flag
       dataReceived = false;
     }
+    
+    // Send periodic status update with better timing controls
+    static unsigned long lastStatusUpdate = 0;
+    const unsigned long statusUpdateInterval = 600000; // 10 minutes in milliseconds
+    
+    if (millis() - lastStatusUpdate > statusUpdateInterval) {
+      // Format a simple status message
+      String statusMsg = "{\"status\":\"online\",\"dmx\":" + String(dmxInitialized ? "true" : "false") + "}";
+      
+      if (lora->sendString(statusMsg)) {
+        Serial.println("Status update sent");
+        lastStatusUpdate = millis();
+      } else {
+        // If send fails, try again in 1 minute instead of 10
+        lastStatusUpdate = millis() - statusUpdateInterval + 60000;
+      }
+    }
   }
   
   // Receive DMX data if needed (for bidirectional operation)
@@ -377,21 +394,6 @@ void loop() {
     delay(50);
     digitalWrite(LED_PIN, LOW);
     lastBlink = millis();
-    
-    // Send a periodic status update
-    if (loraInitialized) {
-      // Format a simple status message
-      String statusMsg = "{\"status\":\"alive\",\"uptime\":" + String(millis()/1000) + "}";
-      
-      // Only send every 10 minutes to avoid using too much airtime
-      static unsigned long lastStatusUpdate = 0;
-      if (millis() - lastStatusUpdate > 600000) {  // 10 minutes
-        if (lora->sendString(statusMsg)) {
-          Serial.println("Status update sent");
-        }
-        lastStatusUpdate = millis();
-      }
-    }
   }
   
   // Short delay to prevent hogging the CPU

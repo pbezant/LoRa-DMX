@@ -9,6 +9,9 @@
 #define BAND_TYPE_EU868 2
 #define BAND_TYPE_OTHER 0
 
+// Define a callback function type for downlink data
+typedef void (*DownlinkCallback)(uint8_t* payload, size_t size, uint8_t port);
+
 /**
  * @brief A class to manage LoRaWAN communication using RadioLib
  * 
@@ -130,6 +133,13 @@ public:
      */
     uint8_t getBandType();
     
+    /**
+     * @brief Set the callback function for downlink data
+     * 
+     * @param callback Pointer to the callback function
+     */
+    void setDownlinkCallback(DownlinkCallback callback);
+    
 private:
     // Radio module and LoRaWAN node
     SX1262* radio;
@@ -157,6 +167,9 @@ private:
     
     // Error handling
     int lastErrorCode;
+    
+    // Downlink callback
+    DownlinkCallback downlinkCallback;
     
     /**
      * @brief Configure subband channel mask based on the current subband

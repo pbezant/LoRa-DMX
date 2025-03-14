@@ -41,7 +41,8 @@ LoRaManager::LoRaManager(LoRaWANBand_t freqBand, uint8_t subBand) :
   lastSnr(0),
   receivedBytes(0),
   lastErrorCode(RADIOLIB_ERR_NONE),
-  consecutiveTransmitErrors(0) {
+  consecutiveTransmitErrors(0),
+  downlinkCallback(nullptr) {
   
   // Set this instance as the active one
   instance = this;
@@ -230,6 +231,12 @@ void LoRaManager::setCredentials(uint64_t joinEUI, uint64_t devEUI, uint8_t* app
   memcpy(this->nwkKey, nwkKey, 16);
 }
 
+// Set the callback function for downlink data
+void LoRaManager::setDownlinkCallback(DownlinkCallback callback) {
+  this->downlinkCallback = callback;
+  Serial.println(F("[LoRaManager] Downlink callback registered"));
+}
+
 // Join the LoRaWAN network
 bool LoRaManager::joinNetwork() {
   if (node == nullptr) {
@@ -280,61 +287,90 @@ bool LoRaManager::joinNetwork() {
     
     // Check for successful join or new session status
     if (state == RADIOLIB_ERR_NONE || state == RADIOLIB_LORAWAN_NEW_SESSION) {
-      if (state == RADIOLIB_ERR_NONE) {
-        Serial.println(F("success!"));
-      } else {
-        Serial.println(F("success! (new session started)"));
-      }
+      // Successfully joined
       isJoined = true;
       
-      // Set a lower data rate for more reliable transmission
-      // For US915, DR0 is SF10/125kHz which is more reliable than higher DRs
-      if (bandType == BAND_TYPE_US915) {
-        Serial.println(F("[LoRaWAN] Setting data rate to DR0 for reliability"));
-        node->setDatarate(0);
-      } else {
-        // For other bands like EU868, DR1 (SF9/125kHz) is a good balance
-        Serial.println(F("[LoRaWAN] Setting data rate to DR1 for reliability"));
-        node->setDatarate(1);
-      }
+      // Configure the data rate for reliability
+      Serial.println(F("[LoRaWAN] Setting data rate to DR1 for reliability"));
+      node->setDatarate(1);
       
-      return true;
+      // Reset frame counters to ensure a clean session
+      node->resetFCntDown();
+      
+      // Send an initial small packet to confirm the join and establish the session fully
+      uint8_t testData[] = {0x01};
+      int sendState = node->sendReceive(testData, sizeof(testData), 1);
+      
+      if (sendState == RADIOLIB_ERR_NONE || sendState > 0) {
+        // Successfully sent the initial packet and potentially received a downlink
+        Serial.println(F("success! (new session started)"));
+        return true;
+      } else {
+        // Session started but initial message failed
+        Serial.println(F("session started but initial message failed, code "));
+        Serial.println(sendState);
+        // We'll still consider this a success since the join worked
+        return true;
+      }
     } else {
+      // Join attempt failed
       Serial.print(F("failed, code "));
       Serial.println(state);
       
-      // If we haven't reached the maximum number of attempts, wait and retry
-      if (attemptCount < maxAttempts) {
-        Serial.print(F("[LoRaWAN] Retrying in "));
-        Serial.print(backoffDelay / 1000.0);
-        Serial.println(F(" seconds..."));
-        
-        // Wait with exponential backoff delay
-        delay(backoffDelay);
-        
-        // Increase backoff delay for next attempt (exponential backoff)
-        backoffDelay *= 2;
+      if (state == RADIOLIB_ERR_NETWORK_NOT_JOINED) {
+        // Node rejected by network - try a different subband or wait longer
+        Serial.println(F("[LoRaWAN] Rejected by network. Will try again with different parameters."));
+      } else if (state == RADIOLIB_ERR_TX_TIMEOUT) {
+        // Signal problem - check antenna, power, or location
+        Serial.println(F("[LoRaWAN] Transmission timeout. Check antenna, signal strength, or move to better location."));
+      } else {
+        // Other error, print for debugging
+        Serial.print(F("[LoRaWAN] Error code: "));
+        Serial.println(state);
+      }
+      
+      // Wait a bit before the next attempt (with exponential backoff)
+      delay(backoffDelay);
+      backoffDelay *= 2;  // Exponential backoff
+      
+      // Cap the backoff delay at 30 seconds
+      if (backoffDelay > 30000) {
+        backoffDelay = 30000;
       }
     }
   }
   
-  // If we've reached this point, all join attempts failed
-  Serial.println(F("[LoRaWAN] All join attempts failed. Please check your configuration and signal."));
+  // If we got here, all attempts failed
   isJoined = false;
+  lastErrorCode = RADIOLIB_ERR_NETWORK_NOT_JOINED;
+  Serial.println(F("[LoRaWAN] Failed to join after maximum attempts."));
   return false;
 }
 
 // Send data to the LoRaWAN network
 bool LoRaManager::sendData(uint8_t* data, size_t len, uint8_t port, bool confirmed) {
+  // Check if we are joined to the network
+  if (!isJoined) {
+    Serial.println(F("[LoRaWAN] Not joined to network, cannot send data"));
+    lastErrorCode = RADIOLIB_ERR_NETWORK_NOT_JOINED;
+    return false;
+  }
+  
+  // Check for valid data
+  if (data == nullptr || len == 0) {
+    Serial.println(F("[LoRaWAN] Invalid data for transmission"));
+    lastErrorCode = RADIOLIB_ERR_INVALID_INPUT;
+    return false;
+  }
+  
   // Maximum number of transmission attempts
   const uint8_t maxAttempts = 3;
   uint8_t attemptCount = 0;
   
-  if (!isJoined || node == nullptr) {
-    Serial.println(F("[LoRaWAN] Not joined to network!"));
-    
-    // Add automatic rejoin attempt when trying to send while not joined
-    Serial.println(F("[LoRaWAN] Attempting to rejoin the network..."));
+  // Check if we need to rejoin
+  // Since isActive is a protected member, we'll just check our isJoined flag
+  if (!isJoined) {
+    Serial.println(F("[LoRaWAN] Not joined, attempting to rejoin the network..."));
     if (joinNetwork()) {
       Serial.println(F("[LoRaWAN] Successfully rejoined, will now try to send data"));
     } else {
@@ -381,6 +417,11 @@ bool LoRaManager::sendData(uint8_t* data, size_t len, uint8_t port, bool confirm
             Serial.print(' ');
           }
           Serial.println();
+          
+          // Call the callback if registered
+          if (downlinkCallback != nullptr) {
+            downlinkCallback(downlinkData, downlinkLen, port);
+          }
           
           // Copy the data to our buffer
           memcpy(receivedData, downlinkData, downlinkLen);
@@ -509,8 +550,7 @@ bool LoRaManager::isNetworkJoined() {
 
 // Handle events (should be called in the loop)
 void LoRaManager::handleEvents() {
-  // This method is kept for compatibility but is not needed with the current implementation
-  // as the sendReceive method already handles downlink reception
+  // Simple placeholder - downlink handling happens in sendReceive
 }
 
 // Get the last error from LoRaWAN operations
