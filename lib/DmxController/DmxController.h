@@ -160,6 +160,36 @@ public:
     FixtureConfig* getAllFixtures() { return _fixtures; }
 
     /**
+     * Run a rainbow chase test pattern across all fixtures
+     * 
+     * @param cycles Number of complete color cycles to run
+     * @param speedMs Delay between color updates in milliseconds
+     * @param staggered If true, each fixture gets offset colors creating a chase effect
+     */
+    void runRainbowChase(int cycles = 3, int speedMs = 50, bool staggered = true);
+
+    /**
+     * Calculate and set a single step of the rainbow pattern
+     * Useful when you want to control the timing yourself from the main loop
+     * 
+     * @param step Current step in the pattern (incremental counter)
+     * @param staggered If true, each fixture gets offset colors creating a chase effect
+     * @return True if the step was processed successfully
+     */
+    bool cycleRainbowStep(uint32_t step, bool staggered = true);
+
+    /**
+     * Run a strobe test pattern on all fixtures
+     * 
+     * @param color Color to use for the strobe (0=white, 1=red, 2=green, 3=blue)
+     * @param count Number of strobe flashes
+     * @param onTimeMs Time for the "on" phase in milliseconds
+     * @param offTimeMs Time for the "off" phase in milliseconds
+     * @param alternate If true, alternate between fixtures for a back-and-forth effect
+     */
+    void runStrobeTest(uint8_t color = 0, int count = 20, int onTimeMs = 50, int offTimeMs = 50, bool alternate = false);
+
+    /**
      * Helper function to blink an LED a specific number of times
      * 
      * @param ledPin Pin number for the LED

@@ -543,7 +543,7 @@ void DmxController::testAllFixtures() {
                 Serial.print("GREEN");
             } else if (b > 0) {
                 Serial.print("BLUE");
-    } else {
+            } else {
                 Serial.print("OFF");
             }
             
@@ -568,6 +568,209 @@ void DmxController::testAllFixtures() {
     delete[] testSteps;
     
     Serial.println("Fixture test complete!");
+}
+
+// Run a rainbow chase test pattern across fixtures
+void DmxController::runRainbowChase(int cycles, int speedMs, bool staggered) {
+    if (_fixtures == NULL || _numFixtures <= 0) {
+        Serial.println("No fixtures configured");
+        return;
+    }
+    
+    Serial.println("Starting rainbow chase test pattern...");
+    Serial.print("Running ");
+    Serial.print(cycles);
+    Serial.print(" cycles with ");
+    Serial.print(speedMs);
+    Serial.print("ms delay. Mode: ");
+    Serial.println(staggered ? "Staggered/Chase" : "Synchronized");
+    
+    // Calculate total steps for all cycles (6 color transitions per cycle × 255 steps per transition)
+    const int totalSteps = cycles * 6 * 255;
+    
+    // Run the pattern for the specified number of cycles
+    for (int step = 0; step < totalSteps; step++) {
+        // Process this step of the animation
+        cycleRainbowStep(step, staggered);
+        
+        // Print progress every 50 steps
+        if (step % 50 == 0) {
+            Serial.print("Rainbow chase progress: ");
+            Serial.print((step * 100) / totalSteps);
+            Serial.println("%");
+        }
+        
+        // Delay for the specified time
+        delay(speedMs);
+    }
+    
+    // Clear all channels when done
+    clearAllChannels();
+    sendData();
+    
+    Serial.println("Rainbow chase test pattern complete!");
+}
+
+// Calculate and set a single step of the rainbow pattern
+bool DmxController::cycleRainbowStep(uint32_t step, bool staggered) {
+    if (_fixtures == NULL || _numFixtures <= 0) {
+        return false;
+    }
+    
+    // Clear all channels first
+    clearAllChannels();
+    
+    // Calculate current cycle position (0-1529 representing full color wheel)
+    // Color transitions: R→RG→G→GB→B→BR→R (6 transitions of 255 steps each)
+    int wheelPos = step % (6 * 255);
+    
+    // Set colors for each fixture
+    for (int i = 0; i < _numFixtures; i++) {
+        // If staggered, offset each fixture's position in the color wheel
+        int fixtureWheelPos = wheelPos;
+        if (staggered) {
+            // Offset each fixture by an equal portion of the color wheel
+            fixtureWheelPos = (wheelPos + (i * (6 * 255) / _numFixtures)) % (6 * 255);
+        }
+        
+        // Convert wheel position to RGB
+        uint8_t r = 0, g = 0, b = 0;
+        
+        if (fixtureWheelPos < 255) {
+            // Red to Yellow (R→RG)
+            r = 255;
+            g = fixtureWheelPos;
+            b = 0;
+        } else if (fixtureWheelPos < 510) {
+            // Yellow to Green (RG→G)
+            r = 255 - (fixtureWheelPos - 255);
+            g = 255;
+            b = 0;
+        } else if (fixtureWheelPos < 765) {
+            // Green to Cyan (G→GB)
+            r = 0;
+            g = 255;
+            b = fixtureWheelPos - 510;
+        } else if (fixtureWheelPos < 1020) {
+            // Cyan to Blue (GB→B)
+            r = 0;
+            g = 255 - (fixtureWheelPos - 765);
+            b = 255;
+        } else if (fixtureWheelPos < 1275) {
+            // Blue to Magenta (B→BR)
+            r = fixtureWheelPos - 1020;
+            g = 0;
+            b = 255;
+        } else {
+            // Magenta to Red (BR→R)
+            r = 255;
+            g = 0;
+            b = 255 - (fixtureWheelPos - 1275);
+        }
+        
+        // Set the fixture colors
+        setFixtureColor(i, r, g, b, 0); // No white channel for rainbow
+    }
+    
+    // Send the DMX data
+    sendData();
+    
+    return true;
+}
+
+// Run a strobe test pattern on all fixtures
+void DmxController::runStrobeTest(uint8_t color, int count, int onTimeMs, int offTimeMs, bool alternate) {
+    if (_fixtures == NULL || _numFixtures <= 0) {
+        Serial.println("No fixtures configured");
+        return;
+    }
+    
+    Serial.println("Starting strobe test pattern...");
+    Serial.print("Running ");
+    Serial.print(count);
+    Serial.print(" strobe flashes with ");
+    Serial.print(onTimeMs);
+    Serial.print("ms on time and ");
+    Serial.print(offTimeMs);
+    Serial.print("ms off time. Mode: ");
+    Serial.println(alternate ? "Alternating" : "All fixtures");
+    
+    // Create arrays for color values
+    uint8_t rValues[4] = {255, 255, 0, 0};     // White, Red, Green, Blue
+    uint8_t gValues[4] = {255, 0, 255, 0};     // White, Red, Green, Blue
+    uint8_t bValues[4] = {255, 0, 0, 255};     // White, Red, Green, Blue
+    uint8_t wValues[4] = {255, 0, 0, 0};       // Only White uses W channel
+    
+    // Ensure color selection is within bounds
+    color = min(color, (uint8_t)3);
+    
+    // Store selected color values
+    uint8_t r = rValues[color];
+    uint8_t g = gValues[color];
+    uint8_t b = bValues[color];
+    uint8_t w = wValues[color];
+    
+    // Print selected color
+    Serial.print("Strobe color: ");
+    switch(color) {
+        case 0: Serial.println("WHITE"); break;
+        case 1: Serial.println("RED"); break;
+        case 2: Serial.println("GREEN"); break;
+        case 3: Serial.println("BLUE"); break;
+    }
+    
+    // Run the strobe pattern
+    for (int i = 0; i < count; i++) {
+        // Clear all channels first
+        clearAllChannels();
+        
+        // Set the fixture colors based on the selected mode
+        if (alternate) {
+            // Alternating mode: turn on either odd or even fixtures
+            bool evenPhase = (i % 2 == 0);
+            
+            for (int f = 0; f < _numFixtures; f++) {
+                bool isEvenFixture = (f % 2 == 0);
+                
+                // Only light up fixtures that match the current phase
+                if (isEvenFixture == evenPhase) {
+                    setFixtureColor(f, r, g, b, w);
+                }
+            }
+        } else {
+            // All fixtures mode: turn on all fixtures
+            for (int f = 0; f < _numFixtures; f++) {
+                setFixtureColor(f, r, g, b, w);
+            }
+        }
+        
+        // Send the DMX data for "on" phase
+        sendData();
+        
+        // Print progress every 5 flashes
+        if (i % 5 == 0) {
+            Serial.print("Strobe flash ");
+            Serial.print(i + 1);
+            Serial.print("/");
+            Serial.println(count);
+        }
+        
+        // Wait for the "on" time
+        delay(onTimeMs);
+        
+        // Turn all fixtures off
+        clearAllChannels();
+        sendData();
+        
+        // Wait for the "off" time
+        delay(offTimeMs);
+    }
+    
+    // Clear all channels when done
+    clearAllChannels();
+    sendData();
+    
+    Serial.println("Strobe test pattern complete!");
 }
 
 // Helper function to blink an LED a specific number of times
