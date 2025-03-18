@@ -98,27 +98,43 @@ function sanitizeString(str) {
 // Downlink encoder function (application to device)
 function encodeDownlink(input) {
   try {
-    // If input is already a string, use it directly
+    // Convert input to JSON string if it's not already
     var jsonString;
     if (typeof input.data === 'string') {
       jsonString = input.data;
     } else {
-      // Otherwise, convert to JSON string
       jsonString = JSON.stringify(input.data);
     }
     
-    // Validate the format for DMX control
-    try {
-      var jsonData = JSON.parse(jsonString);
-      // Check if it's a valid DMX control message
-      if (!jsonData.lights || !Array.isArray(jsonData.lights)) {
+    // Parse and validate the JSON
+    var jsonData = JSON.parse(jsonString);
+    
+    // Check if it's a test pattern command
+    if (jsonData.test && typeof jsonData.test === 'object') {
+      if (!jsonData.test.pattern) {
         return {
           bytes: [],
           warnings: [],
-          errors: ["Invalid DMX control format. 'lights' array is required."]
+          errors: ["Invalid test pattern format. 'pattern' field is required."]
         };
       }
       
+      // Convert the JSON string directly to bytes
+      var bytes = [];
+      for (var i = 0; i < jsonString.length; i++) {
+        bytes.push(jsonString.charCodeAt(i));
+      }
+      
+      return {
+        bytes: bytes,
+        fPort: input.fPort || 1,
+        warnings: [],
+        errors: []
+      };
+    }
+    
+    // Check if it's a DMX control message
+    if (jsonData.lights && Array.isArray(jsonData.lights)) {
       // Validate each light has the correct format
       for (var i = 0; i < jsonData.lights.length; i++) {
         var light = jsonData.lights[i];
@@ -130,21 +146,26 @@ function encodeDownlink(input) {
           };
         }
       }
-    } catch (validationError) {
-      // If JSON parsing fails during validation, it will be caught by the outer try-catch
+      
+      // Convert the JSON string directly to bytes
+      var bytes = [];
+      for (var i = 0; i < jsonString.length; i++) {
+        bytes.push(jsonString.charCodeAt(i));
+      }
+      
+      return {
+        bytes: bytes,
+        fPort: input.fPort || 1,
+        warnings: [],
+        errors: []
+      };
     }
     
-    // Convert JSON string to byte array
-    var bytes = [];
-    for (var i = 0; i < jsonString.length; i++) {
-      bytes.push(jsonString.charCodeAt(i));
-    }
-    
+    // If we get here, the message format is not recognized
     return {
-      bytes: bytes,
-      fPort: input.fPort || 1, // Use provided port or default to 1
+      bytes: [],
       warnings: [],
-      errors: []
+      errors: ["Invalid message format. Must be either a DMX control message or a test pattern command."]
     };
   } catch (error) {
     return {

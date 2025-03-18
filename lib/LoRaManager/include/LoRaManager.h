@@ -87,10 +87,11 @@ public:
      * 
      * @param data String to send
      * @param port Port to use
+     * @param confirmed Whether the transmission should be confirmed
      * @return true if transmission was successful
      * @return false if transmission failed
      */
-    bool sendString(const String& data, uint8_t port = 1);
+    bool sendString(const String& data, uint8_t port = 1, bool confirmed = false);
     
     /**
      * @brief Get the last RSSI value
@@ -127,11 +128,11 @@ public:
     int getLastErrorCode();
     
     /**
-     * @brief Get the frequency band type (US915, EU868, or OTHER)
+     * @brief Get the current band type
      * 
-     * @return uint8_t Band type constant (BAND_TYPE_US915, BAND_TYPE_EU868, or BAND_TYPE_OTHER)
+     * @return uint8_t The current band type (BAND_TYPE_US915, BAND_TYPE_EU868, or BAND_TYPE_OTHER)
      */
-    uint8_t getBandType();
+    uint8_t getBandType() const;
     
     /**
      * @brief Set the callback function for downlink data
@@ -139,6 +140,27 @@ public:
      * @param callback Pointer to the callback function
      */
     void setDownlinkCallback(DownlinkCallback callback);
+    
+    /**
+     * @brief Get the RX1 delay
+     * 
+     * @return RX1 delay in seconds
+     */
+    int getRx1Delay() const;
+    
+    /**
+     * @brief Get the RX1 window timeout
+     * 
+     * @return RX1 timeout in milliseconds
+     */
+    int getRx1Timeout() const;
+    
+    /**
+     * @brief Get the RX2 window timeout
+     * 
+     * @return RX2 timeout in milliseconds
+     */
+    int getRx2Timeout() const;
     
 private:
     // Radio module and LoRaWAN node
@@ -170,6 +192,9 @@ private:
     
     // Downlink callback
     DownlinkCallback downlinkCallback;
+    
+    // Band type
+    uint8_t bandType;
     
     /**
      * @brief Configure subband channel mask based on the current subband

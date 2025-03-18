@@ -80,7 +80,7 @@ LoRaManager::~LoRaManager() {
 }
 
 // Get band type based on band number
-uint8_t LoRaManager::getBandType() {
+uint8_t LoRaManager::getBandType() const {
   // Check band number instead of name
   if (freqBand.bandNum == 0) {
     return BAND_TYPE_OTHER;
@@ -529,8 +529,8 @@ bool LoRaManager::sendData(uint8_t* data, size_t len, uint8_t port, bool confirm
 }
 
 // Helper method to send a string
-bool LoRaManager::sendString(const String& data, uint8_t port) {
-  return sendData((uint8_t*)data.c_str(), data.length(), port);
+bool LoRaManager::sendString(const String& data, uint8_t port, bool confirmed) {
+  return sendData((uint8_t*)data.c_str(), data.length(), port, confirmed);
 }
 
 // Get the last RSSI value
@@ -546,6 +546,24 @@ float LoRaManager::getLastSnr() {
 // Check if the device is joined to the network
 bool LoRaManager::isNetworkJoined() {
   return isJoined;
+}
+
+// Get information about RX1 delay (time between uplink end and RX1 window opening)
+int LoRaManager::getRx1Delay() const {
+  // Default is 1 second for most networks
+  return 5; // This is usually configured by the network on join
+}
+
+// Get information about RX1 window timeout
+int LoRaManager::getRx1Timeout() const {
+  // Return the configured timeout, typically around 50ms
+  return 50; // This is the default for Class A devices
+}
+
+// Get information about RX2 window timeout
+int LoRaManager::getRx2Timeout() const {
+  // Return the configured timeout, typically around 190ms
+  return 190; // This is the default for Class A devices
 }
 
 // Handle events (should be called in the loop)

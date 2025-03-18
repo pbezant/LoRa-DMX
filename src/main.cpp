@@ -55,6 +55,13 @@
  *   }
  * }
  * 
+ * 5. Ping Test (for testing downlink communication):
+ * {
+ *   "test": {
+ *     "pattern": "ping"
+ *   }
+ * }
+ * 
  * Libraries:
  * - LoRaManager: Custom LoRaWAN communication via RadioLib
  * - ArduinoJson: JSON parsing
@@ -321,6 +328,27 @@ bool processJsonPayload(const String& jsonString) {
       
       return true;
     }
+    else if (pattern == "ping") {
+      // Simple ping command for testing downlink connectivity
+      Serial.println("=== PING RECEIVED ===");
+      Serial.println("Downlink communication is working!");
+      
+      // Blink the LED in a distinctive pattern to indicate ping received
+      for (int i = 0; i < 3; i++) {
+        DmxController::blinkLED(LED_PIN, 3, 100);
+        delay(500);
+      }
+      
+      // Send a ping response uplink
+      if (loraInitialized && lora != NULL) {
+        String response = "{\"ping_response\":\"ok\"}";
+        if (lora->sendString(response, 1, true)) {
+          Serial.println("Ping response sent (confirmed)");
+        }
+      }
+      
+      return true;
+    }
     else {
       Serial.print("Unknown test pattern: ");
       Serial.println(pattern);
@@ -574,18 +602,18 @@ void setup() {
     delay(2000);  // 2 second delay before first uplink
     
     String message = "{\"status\":\"online\",\"dmx\":" + String(dmxInitialized ? "true" : "false") + "}";
-    if (lora->sendString(message)) {
-      Serial.println("Status uplink sent successfully");
+    if (lora->sendString(message, 1, true)) { // Changed to confirmed uplink
+      Serial.println("Status uplink sent successfully (confirmed)");
     } else {
       Serial.println("Failed to send status uplink");
     }
   }
   
-  // If DMX is initialized, run a quick rainbow chase demo
+  // If DMX is initialized, set up fixtures but don't run automatic demos
   if (dmxInitialized) {
     // Configure some test fixtures if none exist
     if (dmx->getNumFixtures() == 0) {
-      Serial.println("\nSetting up test fixtures for rainbow chase demo...");
+      Serial.println("\nSetting up test fixtures...");
       // Initialize 4 test fixtures with 4 channels each (RGBW)
       dmx->initializeFixtures(4, 4);
       
@@ -594,68 +622,130 @@ void setup() {
       dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
       dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
       dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+      
+      Serial.println("DMX fixtures configured. No demo will run automatically.");
+      Serial.println("Send a downlink command to control the lights.");
     }
     
-    Serial.println("\nRunning quick rainbow chase demo...");
-    // Run rainbow chase for just 1 cycle at moderate speed
-    dmx->runRainbowChase(1, 20, true);
-    
-    // After rainbow chase, run a quick strobe test
-    Serial.println("\nRunning quick strobe test demo...");
-    // Run a brief white strobe with 10 flashes
-    dmx->runStrobeTest(0, 10, 50, 50, false);
-    
-    // Run an alternating red strobe with 10 flashes
-    dmx->runStrobeTest(1, 10, 50, 50, true);
+    // Ensure all channels are clear at startup
+    dmx->clearAllChannels();
+    dmx->sendData();
   }
 }
 
 void loop() {
-  // Handle LoRaWAN events (includes receiving downlinks)
-  if (loraInitialized && lora != NULL) {
+  // Ensure all channels are clear at startup
+  if (!dmxInitialized) {
+    return;
+  }
+  
+  // Handle LoRaWAN events
+  if (lora != NULL) {
     lora->handleEvents();
-    
-    // Check if we have received data
-    if (dataReceived) {
-      // Process the received data
-      handleDownlink(receivedData, receivedDataSize, receivedPort);
-      
-      // Reset the flag
-      dataReceived = false;
+  }
+  
+  // Check if data was received and process it
+  if (dataReceived) {
+    // Convert payload to string
+    String jsonString = "";
+    for (size_t i = 0; i < receivedDataSize; i++) {
+      jsonString += (char)receivedData[i];
     }
     
-    // Send periodic status update with better timing controls
-    static unsigned long lastStatusUpdate = 0;
-    const unsigned long statusUpdateInterval = 600000; // 10 minutes in milliseconds
+    Serial.print("Processing received data on port ");
+    Serial.print(receivedPort);
+    Serial.print(", data: ");
+    Serial.println(jsonString);
     
-    if (millis() - lastStatusUpdate > statusUpdateInterval) {
-      // Format a simple status message
-      String statusMsg = "{\"status\":\"online\",\"dmx\":" + String(dmxInitialized ? "true" : "false") + "}";
+    // Process the received data as JSON
+    if (processJsonPayload(jsonString)) {
+      Serial.println("Successfully processed downlink payload");
+      // Blink LED to indicate successful processing
+      DmxController::blinkLED(LED_PIN, 2, 200);
+    } else {
+      Serial.println("Failed to process downlink payload");
+    }
+    
+    // Reset the data received flag
+    dataReceived = false;
+  }
+
+  // Handle continuous rainbow demo mode if enabled
+  if (runningRainbowDemo && dmxInitialized && dmx != NULL) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastRainbowStep >= rainbowStepDelay) {
+      dmx->cycleRainbowStep(rainbowStepCounter++, rainbowStaggered);
+      lastRainbowStep = currentMillis;
+    }
+  }
+  
+  // Static variables for timing
+  static unsigned long lastStatusUpdate = 0;
+  static unsigned long lastHeartbeat = 0;
+  static unsigned long lastDebugPrint = 0;
+  unsigned long currentMillis = millis();
+  
+  // Print debug information about RX windows every 60 seconds
+  if (currentMillis - lastDebugPrint >= 60000) {
+    lastDebugPrint = currentMillis;
+    
+    // Get RX window timing information
+    int rx1Delay = lora->getRx1Delay();
+    int rx1Timeout = lora->getRx1Timeout();
+    int rx2Timeout = lora->getRx2Timeout();
+    
+    Serial.println("\n----- LoRaWAN RX Window Info -----");
+    Serial.print("RX1 Delay: ");
+    Serial.print(rx1Delay);
+    Serial.println(" seconds");
+    Serial.print("RX1 Window Timeout: ");
+    Serial.print(rx1Timeout);
+    Serial.println(" ms");
+    Serial.print("RX2 Window Timeout: ");
+    Serial.print(rx2Timeout);
+    Serial.println(" ms");
+    Serial.println("----------------------------------\n");
+  }
+  
+  // Send heartbeat ping every 30 seconds to create downlink opportunity
+  if (currentMillis - lastHeartbeat >= 30000) {
+    lastHeartbeat = currentMillis;
+    
+    // Only send heartbeat if lora is initialized and joined
+    if (lora != NULL && lora->isNetworkJoined()) {
+      Serial.println("Sending heartbeat ping (confirmed uplink)...");
       
-      if (lora->sendString(statusMsg)) {
-        Serial.println("Status update sent");
-        lastStatusUpdate = millis();
+      // Send a minimal payload as confirmed uplink
+      if (lora->sendString("{\"hb\":1}", 1, true)) {
+        Serial.println("Heartbeat ping sent successfully!");
       } else {
-        // If send fails, try again in 1 minute instead of 10
-        lastStatusUpdate = millis() - statusUpdateInterval + 60000;
+        Serial.println("Failed to send heartbeat ping.");
       }
     }
   }
   
-  // Receive DMX data if needed (for bidirectional operation)
-  // This would be implemented if we needed to receive DMX data
-  
-  // Continuous rainbow chase if enabled
-  if (dmxInitialized && runningRainbowDemo) {
-    if (millis() - lastRainbowStep > rainbowStepDelay) {
-      // Process the next step of the rainbow pattern
-      dmx->cycleRainbowStep(rainbowStepCounter, rainbowStaggered);
+  // Send full status update every 1 minute (reduced from 2 minutes)
+  if (currentMillis - lastStatusUpdate >= 60000) {
+    lastStatusUpdate = currentMillis;
+    
+    // Only send status if lora is initialized and joined
+    if (lora != NULL && lora->isNetworkJoined()) {
+      // Format a status message
+      String message = "{\"status\":\"";
+      message += dmxInitialized ? "DMX_OK" : "DMX_ERROR";
+      message += "\"}";
       
-      // Increment the counter (will automatically wrap due to modulo in cycleRainbowStep)
-      rainbowStepCounter++;
+      Serial.println("Sending status update (confirmed uplink)...");
       
-      // Update the timestamp
-      lastRainbowStep = millis();
+      // Send the status message as a confirmed uplink
+      if (lora->sendString(message, 1, true)) {
+        Serial.println("Status update sent successfully!");
+        // Keep the regular interval of 1 minute for the next update
+      } else {
+        Serial.println("Failed to send status update. Will retry in 30 seconds.");
+        // Adjust the last status update time to retry sooner
+        lastStatusUpdate = currentMillis - 30000;
+      }
     }
   }
   

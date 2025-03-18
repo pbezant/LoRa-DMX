@@ -165,3 +165,66 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Heltec for the LoRa 32 V3 hardware
 - The Things Network for LoRaWAN infrastructure
 - Contributors to the used libraries 
+
+### Example Commands
+
+1. **Ping Command**
+   ```json
+   {
+     "test": {
+       "pattern": "ping"
+     }
+   }
+   ```
+   - Purpose: Test downlink communication
+   - Expected Response: `{"ping_response":"ok"}`
+   - Device Action: Blinks LED 3 times
+
+2. **DMX Control - Full Brightness**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1,
+         "channels": [255, 255, 255, 255, 255, 255, 255, 255]
+       }
+     ]
+   }
+   ```
+   - Purpose: Set all channels of a light fixture to maximum brightness
+   - Expected Response: `{"status":"DMX_OK"}`
+   - Device Action: Sends DMX data to the specified fixture
+
+3. **DMX Control - Individual Channels**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1,
+         "channels": [255, 0, 255, 0, 255, 0, 255, 0]
+       }
+     ]
+   }
+   ```
+   - Purpose: Set alternating channels to full brightness and off
+   - Expected Response: `{"status":"DMX_OK"}`
+   - Device Action: Sends DMX data to the specified fixture
+
+4. **DMX Control - Multiple Fixtures**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1,
+         "channels": [255, 255, 255, 0, 0, 0, 0, 0]
+       },
+       {
+         "address": 2,
+         "channels": [0, 0, 0, 255, 255, 255, 0, 0]
+       }
+     ]
+   }
+   ```
+   - Purpose: Control multiple fixtures with different channel values
+   - Expected Response: `{"status":"DMX_OK"}`
+   - Device Action: Sends DMX data to all specified fixtures 
