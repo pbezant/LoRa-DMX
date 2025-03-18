@@ -78,19 +78,19 @@ uint8_t appKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 
 ```
 
 ## JSON Command Format
-
+(Working)
 The system expects JSON commands in the following format:
 
-```json
+```json 
 {
   "lights": [
     {
       "address": 1,
-      "channels": [255, 0, 128, 0]
+      "channels": [0, 255, 0, 0]
     },
     {
       "address": 5,
-      "channels": [255, 255, 100, 0]
+      "channels": [0, 255, 0, 0]
     }
   ]
 }
