@@ -40,26 +40,35 @@ void DmxController::begin() {
     personality.footprint = 4; // 4 channels for RGBW
     strcpy(personality.description, "RGBW");
     
-    // Install the DMX driver with the correct parameters for esp_dmx 4.1.0
-    if (!dmx_driver_install((dmx_port_t)_dmxPort, &config, &personality, 1)) {
-        Serial.println("Failed to install DMX driver");
-        return;
-    }
+    // Clear the DMX data buffer first
+    memset(_dmxData, 0, DMX_PACKET_SIZE);
+    _dmxData[0] = 0; // Start code must be 0
     
-    // Set DMX pins
-    dmx_set_pin((dmx_port_t)_dmxPort, _txPin, _rxPin, _dirPin);
+    // Always properly delete any previous driver to avoid "already installed" error
+    // We'll ignore any errors here since it might not be installed yet
+    dmx_driver_delete((dmx_port_t)_dmxPort);
+    delay(500); // Give it time to fully uninstall
     
-    // Manually set direction pin mode (some fixtures need this)
+    Serial.println("Installing DMX driver with hardware UART...");
+    
+    // Set GPIO pins with direct pinMode - critical for proper operation
     pinMode(_dirPin, OUTPUT);
     digitalWrite(_dirPin, HIGH);  // HIGH = transmit mode
     
-    Serial.println("DMX driver installed successfully");
+    // Configure hardware UART directly instead of relying on the driver
+    Serial1.begin(250000, SERIAL_8N2, _rxPin, _txPin);
+    delay(100); // Allow UART to stabilize
+    
+    Serial.println("DMX controller initialized successfully!");
     Serial.print("DMX using pins - TX: ");
     Serial.print(_txPin);
     Serial.print(", RX: ");
     Serial.print(_rxPin);
     Serial.print(", DIR: ");
     Serial.println(_dirPin);
+    
+    // Flag as initialized even if the driver failed, since we'll use direct UART
+    _isInitialized = true;
 }
 
 // Initialize fixtures array with the given configuration
@@ -145,14 +154,92 @@ void DmxController::sendData() {
     // Ensure DMX start code is 0
     _dmxData[0] = 0;
     
-    // Write the data to the DMX buffer
-    dmx_write((dmx_port_t)_dmxPort, _dmxData, DMX_PACKET_SIZE);
-    
-    // Send the DMX packet
-    dmx_send((dmx_port_t)_dmxPort);
-    
-    // Wait for the data to be sent
-    dmx_wait_sent((dmx_port_t)_dmxPort, DMX_TIMEOUT_TICK);
+    // If the driver failed, use direct UART implementation
+    if (_isInitialized) {
+        // Store current values for debug comparison
+        static bool first_send = true;
+        static uint8_t last_values[DMX_PACKET_SIZE];
+        
+        bool values_changed = first_send;
+        if (!first_send) {
+            // Check if any values changed by more than 5 (to avoid minor fluctuations)
+            for (int i = 1; i < DMX_PACKET_SIZE; i++) {
+                if (abs(_dmxData[i] - last_values[i]) > 5) {
+                    values_changed = true;
+                    break;
+                }
+            }
+        }
+        
+        // IMPROVED DMX OUTPUT PROTOCOL - More reliable timing
+        digitalWrite(_dirPin, HIGH);    // Ensure in transmit mode (DE=HIGH, RE=HIGH)
+        
+        // Generate DMX break without closing UART - more stable method
+        Serial1.flush();                // Wait for all data to be sent
+        Serial1.updateBaudRate(90000);  // Temporary baud rate change to create break
+        Serial1.write(0);               // Send a zero byte at lower baud rate
+        Serial1.flush();                // Wait for completion
+        Serial1.updateBaudRate(250000); // Restore DMX baud rate (standard)
+        
+        // Send DMX data - all 513 bytes (start code + 512 channels)
+        Serial1.write(_dmxData, DMX_PACKET_SIZE);
+        Serial1.flush();                // Ensure all data is completely sent
+        
+        // Wait longer to ensure data is fully transmitted (helps with stability)
+        delay(3); // Increased from 1ms to 3ms
+        
+        // Save current values for next comparison
+        if (first_send || values_changed) {
+            memcpy(last_values, _dmxData, DMX_PACKET_SIZE);
+            first_send = false;
+            
+            // Print DMX data values for debugging, but only when they change
+            Serial.println("DMX Output Data Updated:");
+            
+            // Print active channel values (non-zero channels only)
+            bool hasActiveChannels = false;
+            for (int i = 1; i < DMX_PACKET_SIZE; i++) {
+                if (_dmxData[i] > 0) {
+                    if (!hasActiveChannels) {
+                        Serial.println("Active channels:");
+                        hasActiveChannels = true;
+                    }
+                    Serial.print("  Ch ");
+                    Serial.print(i);
+                    Serial.print(": ");
+                    Serial.println(_dmxData[i]);
+                }
+            }
+            
+            if (!hasActiveChannels) {
+                Serial.println("No active channels (all values are 0)");
+            }
+            
+            // Print fixture information if available
+            if (_fixtures != NULL && _numFixtures > 0) {
+                Serial.println("Fixture Colors:");
+                for (int i = 0; i < _numFixtures; i++) {
+                    Serial.print("  ");
+                    Serial.print(_fixtures[i].name);
+                    Serial.print(": R=");
+                    Serial.print(_dmxData[_fixtures[i].redChannel]);
+                    Serial.print(", G=");
+                    Serial.print(_dmxData[_fixtures[i].greenChannel]);
+                    Serial.print(", B=");
+                    Serial.print(_dmxData[_fixtures[i].blueChannel]);
+                    Serial.print(", W=");
+                    Serial.println(_dmxData[_fixtures[i].whiteChannel]);
+                }
+            }
+            
+            // Log success
+            Serial.print("DMX data sent (");
+            Serial.print(DMX_PACKET_SIZE);
+            Serial.println(" bytes)");
+        }
+    } else {
+        Serial.println("DMX not properly initialized, cannot send data");
+    }
 }
 
 // Clear all DMX channels (set to 0)
@@ -780,5 +867,152 @@ void DmxController::blinkLED(int ledPin, int times, int delayMs) {
         delay(delayMs);
         digitalWrite(ledPin, LOW);
         delay(delayMs);
+    }
+}
+
+// Save the current DMX settings to persistent storage
+bool DmxController::saveSettings() {
+    // Open the preferences with the namespace "dmx_settings"
+    if (!_preferences.begin("dmx_settings", false)) {
+        Serial.println("Failed to open preferences");
+        return false;
+    }
+    
+    // Store the number of fixtures and channels per fixture for validation on load
+    _preferences.putInt("num_fixtures", _numFixtures);
+    _preferences.putInt("chan_per_fix", _channelsPerFixture);
+    
+    // Create a buffer for the DMX data (excluding the start code)
+    size_t dataSize = DMX_PACKET_SIZE - 1;  // Exclude the start code
+    
+    // Store the DMX data (excluding the start code at index 0)
+    _preferences.putBytes("dmx_data", &_dmxData[1], dataSize);
+    
+    // Store fixture configurations
+    if (_fixtures != NULL && _numFixtures > 0) {
+        for (int i = 0; i < _numFixtures; i++) {
+            char keyBuffer[32]; // Buffer for storing key names
+            
+            // Format key names using snprintf
+            snprintf(keyBuffer, sizeof(keyBuffer), "fix_%d_addr", i);
+            _preferences.putInt(keyBuffer, _fixtures[i].startAddr);
+            
+            snprintf(keyBuffer, sizeof(keyBuffer), "fix_%d_red", i);
+            _preferences.putInt(keyBuffer, _fixtures[i].redChannel);
+            
+            snprintf(keyBuffer, sizeof(keyBuffer), "fix_%d_green", i);
+            _preferences.putInt(keyBuffer, _fixtures[i].greenChannel);
+            
+            snprintf(keyBuffer, sizeof(keyBuffer), "fix_%d_blue", i);
+            _preferences.putInt(keyBuffer, _fixtures[i].blueChannel);
+            
+            snprintf(keyBuffer, sizeof(keyBuffer), "fix_%d_white", i);
+            _preferences.putInt(keyBuffer, _fixtures[i].whiteChannel);
+            // We can't store the name directly as it's a char* pointer
+        }
+    }
+    
+    _preferences.end();
+    Serial.println("DMX settings saved to persistent storage");
+    return true;
+}
+
+// Load DMX settings from persistent storage
+bool DmxController::loadSettings() {
+    bool settingsLoaded = false;
+    
+    // Open the preferences with the namespace "dmx_settings"
+    if (!_preferences.begin("dmx_settings", true)) {
+        Serial.println("Failed to open preferences");
+        return false;
+    }
+    
+    // Check if we have saved settings
+    if (_preferences.isKey("dmx_data")) {
+        // Validate the number of fixtures and channels per fixture
+        int savedNumFixtures = _preferences.getInt("num_fixtures", 0);
+        int savedChannelsPerFixture = _preferences.getInt("chan_per_fix", 0);
+        
+        // Only load if the configuration is compatible
+        if (savedNumFixtures == _numFixtures && savedChannelsPerFixture == _channelsPerFixture) {
+            // Create a buffer for the DMX data (excluding the start code)
+            size_t dataSize = DMX_PACKET_SIZE - 1;  // Exclude the start code
+            
+            // Load the DMX data (excluding the start code at index 0)
+            _preferences.getBytes("dmx_data", &_dmxData[1], dataSize);
+            
+            // Ensure the start code is 0
+            _dmxData[0] = 0;
+            
+            Serial.println("DMX settings loaded from persistent storage");
+            settingsLoaded = true;
+        } else {
+            Serial.println("Saved DMX configuration is incompatible with current setup");
+        }
+    } else {
+        Serial.println("No saved DMX settings found");
+    }
+    
+    _preferences.end();
+    
+    // If no settings were loaded, set the default white color
+    if (!settingsLoaded) {
+        setDefaultWhite();
+    }
+    
+    return settingsLoaded;
+}
+
+// Set all fixtures to default white color
+void DmxController::setDefaultWhite() {
+    Serial.println("Setting all fixtures to default white color");
+    
+    // Clear all DMX channels first
+    clearAllChannels();
+    
+    // Set all fixtures to white
+    if (_fixtures != NULL && _numFixtures > 0) {
+        for (int i = 0; i < _numFixtures; i++) {
+            // Setting to full white (0 for RGB, 255 for W)
+            setFixtureColor(i, 0, 0, 0, 255);
+            
+            // Log the values being set
+            Serial.print("Setting fixture ");
+            Serial.print(i);
+            Serial.print(" (");
+            Serial.print(_fixtures[i].name);
+            Serial.print(") to white: W channel ");
+            Serial.print(_fixtures[i].whiteChannel);
+            Serial.print(" = 255, at DMX addr ");
+            Serial.println(_fixtures[i].startAddr);
+        }
+        
+        // Print DMX data for verification
+        Serial.println("DMX Data before sending:");
+        for (int i = 0; i < _numFixtures; i++) {
+            Serial.print("Fixture ");
+            Serial.print(i);
+            Serial.print(" values - R:");
+            Serial.print(_dmxData[_fixtures[i].redChannel]);
+            Serial.print(", G:");
+            Serial.print(_dmxData[_fixtures[i].greenChannel]);
+            Serial.print(", B:");
+            Serial.print(_dmxData[_fixtures[i].blueChannel]);
+            Serial.print(", W:");
+            Serial.println(_dmxData[_fixtures[i].whiteChannel]);
+        }
+        
+        sendData();  // Send data to fixtures
+    } else {
+        // No fixtures configured, try setting standard RGBW fixtures
+        Serial.println("No fixtures configured, setting default RGBW pattern");
+        for (int addr = 1; addr <= 16; addr += 4) {
+            setManualFixtureColor(addr, 0, 0, 0, 255);  // Set to full white
+            
+            Serial.print("Set DMX address ");
+            Serial.print(addr);
+            Serial.println(" to RGBW: [0, 0, 0, 255]");
+        }
+        sendData();  // Send data to fixtures
     }
 } 

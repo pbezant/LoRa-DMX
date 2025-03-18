@@ -12,6 +12,7 @@
 
 #include <Arduino.h>
 #include <esp_dmx.h>
+#include <Preferences.h>  // For persistent storage
 
 // Add the DMX_INTR_FLAGS_DEFAULT definition if it's not already included
 #ifndef DMX_INTR_FLAGS_DEFAULT
@@ -198,12 +199,35 @@ public:
      */
     static void blinkLED(int ledPin, int times, int delayMs);
 
+    /**
+     * Save the current DMX settings to persistent storage
+     * This saves the current state of all DMX channels
+     * 
+     * @return True if saved successfully
+     */
+    bool saveSettings();
+
+    /**
+     * Load DMX settings from persistent storage
+     * If no settings exist, default to white
+     * 
+     * @return True if settings were loaded, false if defaults were used
+     */
+    bool loadSettings();
+
+    /**
+     * Set all fixtures to default white color
+     */
+    void setDefaultWhite();
+
 private:
     uint8_t _dmxPort;
     uint8_t _txPin;
     uint8_t _rxPin;
     uint8_t _dirPin;
     uint8_t _dmxData[DMX_PACKET_SIZE];  // Array to hold DMX data
+    bool _isInitialized = false;        // Flag indicating if DMX is properly initialized
+    Preferences _preferences;           // Preferences instance for storing settings
     
     FixtureConfig* _fixtures;  // Dynamic array of fixture configurations
     int _numFixtures;          // Number of fixtures

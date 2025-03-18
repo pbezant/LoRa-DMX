@@ -568,7 +568,11 @@ int LoRaManager::getRx2Timeout() const {
 
 // Handle events (should be called in the loop)
 void LoRaManager::handleEvents() {
-  // Simple placeholder - downlink handling happens in sendReceive
+  // We can't access the node's internal properties directly
+  // This function is a placeholder for future RadioLib updates
+
+  // Nothing to do here - downlink handling happens in sendReceive
+  // The main loop should handle reconnection if needed
 }
 
 // Get the last error from LoRaWAN operations

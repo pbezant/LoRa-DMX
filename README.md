@@ -228,3 +228,60 @@ This project is licensed under the MIT License - see the LICENSE file for detail
    - Purpose: Control multiple fixtures with different channel values
    - Expected Response: `{"status":"DMX_OK"}`
    - Device Action: Sends DMX data to all specified fixtures 
+
+5. **Blue and Red Fixtures**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1,
+         "channels": [0, 0, 255, 0]
+       },
+       {
+         "address": 5,
+         "channels": [255, 0, 0, 0]
+       }
+     ]
+   }
+   ```
+   - Purpose: Set fixture 1 to blue and fixture 5 to red
+   - Expected Response: `{"status":"DMX_OK"}`
+   - Device Action: Updates DMX channels for the specified fixtures
+
+6. **Green and Purple Fixtures**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1,
+         "channels": [0, 255, 0, 0]
+       },
+       {
+         "address": 5,
+         "channels": [128, 0, 255, 0]
+       }
+     ]
+   }
+   ```
+   - Purpose: Set fixture 1 to green and fixture 5 to purple
+   - Expected Response: `{"status":"DMX_OK"}`
+   - Device Action: Updates DMX channels for the specified fixtures
+
+7. **Yellow and Cyan Fixtures**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1,
+         "channels": [255, 255, 0, 0]
+       },
+       {
+         "address": 5,
+         "channels": [0, 255, 255, 0]
+       }
+     ]
+   }
+   ```
+   - Purpose: Set fixture 1 to yellow and fixture 5 to cyan
+   - Expected Response: `{"status":"DMX_OK"}`
+   - Device Action: Updates DMX channels for the specified fixtures 
