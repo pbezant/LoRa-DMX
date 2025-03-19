@@ -78,18 +78,26 @@ uint8_t appKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 
 ```
 
 ## JSON Command Format
-(Working)
+
 The system expects JSON commands in the following format:
 
 ```json 
 {
   "lights": [
     {
-      "address": 1,
+      "address": 1, 
       "channels": [0, 255, 0, 0]
     },
     {
-      "address": 5,
+      "address": 2,
+      "channels": [0, 255, 0, 0]
+    },
+    {
+      "address": 3,
+      "channels": [0, 255, 0, 0]
+    },
+    {
+      "address": 4,
       "channels": [0, 255, 0, 0]
     }
   ]
@@ -102,45 +110,148 @@ Where:
 
 ## TTN Payload Formatter
 
-Add the following JavaScript decoder in your TTN application to format the downlink payload as a JSON string:
+The included payload formatter (`ttn_payload_formatter.js`) supports multiple command types:
+
+1. **JSON commands** - Complex control of multiple fixtures
+2. **Simple color commands** - Quick color changes for all fixtures
+3. **Special test commands** - For debugging and testing
+
+Add the following JavaScript code to your TTN application's payload formatters section:
 
 ```javascript
-function decodeDownlink(input) {
-  // For downlink, we simply pass through the JSON string
-  try {
-    var jsonString = String.fromCharCode.apply(null, input.bytes);
-    return {
-      data: {
-        jsonData: jsonString
-      },
-      warnings: [],
-      errors: []
-    };
-  } catch (error) {
-    return {
-      data: {},
-      warnings: [],
-      errors: ["Failed to process downlink: " + error]
-    };
-  }
-}
-
-function encodeDownlink(input) {
-  // Convert the input JSON object to a string
-  var jsonString = JSON.stringify(input.data);
-  
-  // Convert the string to an array of bytes
-  var bytes = [];
-  for (var i = 0; i < jsonString.length; i++) {
-    bytes.push(jsonString.charCodeAt(i));
-  }
-  
-  return {
-    bytes: bytes,
-    fPort: 1
-  };
-}
+// Copy the contents of ttn_payload_formatter.js here
+// Or use the file included in this repository
 ```
+
+## Simple Command Format
+
+For quick testing, the payload formatter supports simplified commands:
+
+### Numeric Commands (Single byte)
+- `0` - Turn all fixtures OFF
+- `1` - Set all fixtures to RED
+- `2` - Set all fixtures to GREEN
+- `3` - Set all fixtures to BLUE
+- `4` - Set all fixtures to WHITE
+
+### Text Commands
+- `go` - Process the built-in example JSON (sets fixtures to green)
+- `{"command": "test"}` - Run a special test mode (sets all fixtures to green)
+- `{"command": "red"}` - Set all fixtures to red
+- `{"command": "green"}` - Set all fixtures to green
+- `{"command": "blue"}` - Set all fixtures to blue
+- `{"command": "white"}` - Set all fixtures to white
+- `{"command": "off"}` - Turn all fixtures off
+
+## Example Commands
+
+1. **Green Fixtures (All addresses 1-4)**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1, 
+         "channels": [0, 255, 0, 0]
+       },
+       {
+         "address": 2,
+         "channels": [0, 255, 0, 0]
+       },
+       {
+         "address": 3,
+         "channels": [0, 255, 0, 0]
+       },
+       {
+         "address": 4,
+         "channels": [0, 255, 0, 0]
+       }
+     ]
+   }
+   ```
+   - Purpose: Set all fixtures to green (RGBW format)
+   - Device Action: Updates DMX channels for all fixtures
+
+2. **Different Colors for Different Fixtures**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1,
+         "channels": [255, 0, 0, 0]    // Red
+       },
+       {
+         "address": 2,
+         "channels": [0, 255, 0, 0]    // Green
+       },
+       {
+         "address": 3,
+         "channels": [0, 0, 255, 0]    // Blue
+       },
+       {
+         "address": 4,
+         "channels": [255, 255, 0, 0]  // Yellow
+       }
+     ]
+   }
+   ```
+   - Purpose: Set each fixture to a different color
+   - Device Action: Updates DMX channels with different colors for each fixture
+
+3. **Blue and Red Fixtures**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1,
+         "channels": [0, 0, 255, 0]
+       },
+       {
+         "address": 5,
+         "channels": [255, 0, 0, 0]
+       }
+     ]
+   }
+   ```
+   - Purpose: Set fixture 1 to blue and fixture 5 to red
+   - Device Action: Updates DMX channels for the specified fixtures
+
+4. **Rainbow Effect**
+   ```json
+   {
+     "lights": [
+       {
+         "address": 1,
+         "channels": [255, 0, 0, 0]     // Red
+       },
+       {
+         "address": 2,
+         "channels": [255, 165, 0, 0]   // Orange
+       },
+       {
+         "address": 3,
+         "channels": [255, 255, 0, 0]   // Yellow
+       },
+       {
+         "address": 4,
+         "channels": [0, 255, 0, 0]     // Green
+       },
+       {
+         "address": 5,
+         "channels": [0, 0, 255, 0]     // Blue
+       },
+       {
+         "address": 6,
+         "channels": [75, 0, 130, 0]    // Indigo
+       },
+       {
+         "address": 7,
+         "channels": [143, 0, 255, 0]   // Violet
+       }
+     ]
+   }
+   ```
+   - Purpose: Create a rainbow effect across multiple fixtures
+   - Device Action: Sets each fixture to a different color in the rainbow spectrum
 
 ## Troubleshooting
 
@@ -165,123 +276,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Heltec for the LoRa 32 V3 hardware
 - The Things Network for LoRaWAN infrastructure
 - Contributors to the used libraries 
-
-### Example Commands
-
-1. **Ping Command**
-   ```json
-   {
-     "test": {
-       "pattern": "ping"
-     }
-   }
-   ```
-   - Purpose: Test downlink communication
-   - Expected Response: `{"ping_response":"ok"}`
-   - Device Action: Blinks LED 3 times
-
-2. **DMX Control - Full Brightness**
-   ```json
-   {
-     "lights": [
-       {
-         "address": 1,
-         "channels": [255, 255, 255, 255, 255, 255, 255, 255]
-       }
-     ]
-   }
-   ```
-   - Purpose: Set all channels of a light fixture to maximum brightness
-   - Expected Response: `{"status":"DMX_OK"}`
-   - Device Action: Sends DMX data to the specified fixture
-
-3. **DMX Control - Individual Channels**
-   ```json
-   {
-     "lights": [
-       {
-         "address": 1,
-         "channels": [255, 0, 255, 0, 255, 0, 255, 0]
-       }
-     ]
-   }
-   ```
-   - Purpose: Set alternating channels to full brightness and off
-   - Expected Response: `{"status":"DMX_OK"}`
-   - Device Action: Sends DMX data to the specified fixture
-
-4. **DMX Control - Multiple Fixtures**
-   ```json
-   {
-     "lights": [
-       {
-         "address": 1,
-         "channels": [255, 255, 255, 0, 0, 0, 0, 0]
-       },
-       {
-         "address": 2,
-         "channels": [0, 0, 0, 255, 255, 255, 0, 0]
-       }
-     ]
-   }
-   ```
-   - Purpose: Control multiple fixtures with different channel values
-   - Expected Response: `{"status":"DMX_OK"}`
-   - Device Action: Sends DMX data to all specified fixtures 
-
-5. **Blue and Red Fixtures**
-   ```json
-   {
-     "lights": [
-       {
-         "address": 1,
-         "channels": [0, 0, 255, 0]
-       },
-       {
-         "address": 5,
-         "channels": [255, 0, 0, 0]
-       }
-     ]
-   }
-   ```
-   - Purpose: Set fixture 1 to blue and fixture 5 to red
-   - Expected Response: `{"status":"DMX_OK"}`
-   - Device Action: Updates DMX channels for the specified fixtures
-
-6. **Green and Purple Fixtures**
-   ```json
-   {
-     "lights": [
-       {
-         "address": 1,
-         "channels": [0, 255, 0, 0]
-       },
-       {
-         "address": 5,
-         "channels": [128, 0, 255, 0]
-       }
-     ]
-   }
-   ```
-   - Purpose: Set fixture 1 to green and fixture 5 to purple
-   - Expected Response: `{"status":"DMX_OK"}`
-   - Device Action: Updates DMX channels for the specified fixtures
-
-7. **Yellow and Cyan Fixtures**
-   ```json
-   {
-     "lights": [
-       {
-         "address": 1,
-         "channels": [255, 255, 0, 0]
-       },
-       {
-         "address": 5,
-         "channels": [0, 255, 255, 0]
-       }
-     ]
-   }
-   ```
-   - Purpose: Set fixture 1 to yellow and fixture 5 to cyan
-   - Expected Response: `{"status":"DMX_OK"}`
-   - Device Action: Updates DMX channels for the specified fixtures 

@@ -3,58 +3,24 @@
 
 // Uplink decoder function (device to application)
 function decodeUplink(input) {
+  // Try to parse as JSON first
   try {
-    // Convert the byte array to a string
-    var jsonString = String.fromCharCode.apply(null, input.bytes);
+    // Convert bytes to string
+    var str = String.fromCharCode.apply(null, input.bytes);
+    var data = JSON.parse(str);
     
-    // Try to parse it as JSON
-    var jsonData = JSON.parse(jsonString);
-    
-    // Validate the format based on the device's known message patterns
-    if (jsonData.status) {
-      // Status message
-      if (jsonData.status === "online" && "dmx" in jsonData) {
-        // Online status message with DMX state
-        return {
-          data: {
-            status: jsonData.status,
-            dmx: !!jsonData.dmx, // Ensure boolean
-            decoded_payload: jsonString // Include the original for reference
-          },
-          warnings: [],
-          errors: []
-        };
-      } else if (jsonData.status === "alive" && "uptime" in jsonData) {
-        // Alive message with uptime
-        return {
-          data: {
-            status: jsonData.status,
-            uptime: parseInt(jsonData.uptime, 10), // Ensure number
-            uptime_formatted: formatUptime(jsonData.uptime),
-            decoded_payload: jsonString // Include the original for reference
-          },
-          warnings: [],
-          errors: []
-        };
-      }
-    }
-    
-    // If we get here, the JSON is valid but doesn't match expected patterns
-    // Return the parsed JSON data anyway as it might be a custom message
+    // Return the parsed JSON and add metadata
     return {
-      data: {
-        ...jsonData,
-        decoded_payload: jsonString
-      },
-      warnings: ["Message format doesn't match expected patterns, but JSON is valid"],
+      data: data,
+      warnings: [],
       errors: []
     };
   } catch (error) {
-    // If we can't parse as JSON, return the raw data as a string
+    // If it's not valid JSON, return raw data
     return {
       data: {
         raw: bytesToHex(input.bytes),
-        text: sanitizeString(String.fromCharCode.apply(null, input.bytes))
+        text: String.fromCharCode.apply(null, input.bytes)
       },
       warnings: ["Failed to parse as JSON: " + error.message],
       errors: []
@@ -85,7 +51,8 @@ function formatUptime(seconds) {
 function bytesToHex(bytes) {
   var hex = [];
   for (var i = 0; i < bytes.length; i++) {
-    hex.push((bytes[i] < 16 ? "0" : "") + bytes[i].toString(16));
+    var current = bytes[i] < 0x10 ? "0" + bytes[i].toString(16) : bytes[i].toString(16);
+    hex.push(current);
   }
   return hex.join("");
 }
@@ -97,83 +64,89 @@ function sanitizeString(str) {
 
 // Downlink encoder function (application to device)
 function encodeDownlink(input) {
-  try {
-    // Convert input to JSON string if it's not already
-    var jsonString;
-    if (typeof input.data === 'string') {
-      jsonString = input.data;
-    } else {
-      jsonString = JSON.stringify(input.data);
-    }
-    
-    // Parse and validate the JSON
-    var jsonData = JSON.parse(jsonString);
-    
-    // Check if it's a test pattern command
-    if (jsonData.test && typeof jsonData.test === 'object') {
-      if (!jsonData.test.pattern) {
-        return {
-          bytes: [],
-          warnings: [],
-          errors: ["Invalid test pattern format. 'pattern' field is required."]
-        };
-      }
-      
-      // Convert the JSON string directly to bytes
-      var bytes = [];
-      for (var i = 0; i < jsonString.length; i++) {
-        bytes.push(jsonString.charCodeAt(i));
-      }
-      
-      return {
-        bytes: bytes,
-        fPort: input.fPort || 1,
-        warnings: [],
-        errors: []
-      };
-    }
-    
-    // Check if it's a DMX control message
-    if (jsonData.lights && Array.isArray(jsonData.lights)) {
-      // Validate each light has the correct format
-      for (var i = 0; i < jsonData.lights.length; i++) {
-        var light = jsonData.lights[i];
-        if (!light.address || !light.channels || !Array.isArray(light.channels)) {
-          return {
-            bytes: [],
-            warnings: [],
-            errors: ["Invalid light format at index " + i + ". Each light must have 'address' and 'channels' array."]
-          };
-        }
-      }
-      
-      // Convert the JSON string directly to bytes
-      var bytes = [];
-      for (var i = 0; i < jsonString.length; i++) {
-        bytes.push(jsonString.charCodeAt(i));
-      }
-      
-      return {
-        bytes: bytes,
-        fPort: input.fPort || 1,
-        warnings: [],
-        errors: []
-      };
-    }
-    
-    // If we get here, the message format is not recognized
+  // CASE 1: Special command strings
+  if (input.data.command === "go") {
     return {
-      bytes: [],
-      warnings: [],
-      errors: ["Invalid message format. Must be either a DMX control message or a test pattern command."]
-    };
-  } catch (error) {
-    return {
-      bytes: [],
-      warnings: [],
-      errors: ["Failed to encode downlink: " + error]
+      bytes: [0x67, 0x6F], // ASCII "go"
+      fPort: input.fPort || 1
     };
   }
+  
+  // CASE 2: Special numeric commands
+  if (input.data.command === "green" || input.data.command === 2) {
+    return {
+      bytes: [0x02], // Command code for green
+      fPort: input.fPort || 1
+    };
+  }
+  if (input.data.command === "red" || input.data.command === 1) {
+    return {
+      bytes: [0x01], // Command code for red
+      fPort: input.fPort || 1
+    };
+  }
+  if (input.data.command === "blue" || input.data.command === 3) {
+    return {
+      bytes: [0x03], // Command code for blue
+      fPort: input.fPort || 1
+    };
+  }
+  if (input.data.command === "white" || input.data.command === 4) {
+    return {
+      bytes: [0x04], // Command code for white
+      fPort: input.fPort || 1
+    };
+  }
+  if (input.data.command === "off" || input.data.command === 0) {
+    return {
+      bytes: [0x00], // Command code for off
+      fPort: input.fPort || 1
+    };
+  }
+  
+  // CASE 3: Direct test mode
+  if (input.data.command === "test") {
+    return {
+      bytes: [0xAA], // Special test trigger
+      fPort: input.fPort || 1
+    };
+  }
+  
+  // CASE 4: Lights JSON object - proper DMX control
+  if (input.data.lights) {
+    // Convert the JSON object to a string
+    var jsonString = JSON.stringify({lights: input.data.lights});
+    
+    // Convert the string to bytes
+    var bytes = [];
+    for (var i = 0; i < jsonString.length; i++) {
+      bytes.push(jsonString.charCodeAt(i));
+    }
+    
+    return {
+      bytes: bytes,
+      fPort: input.fPort || 1
+    };
+  }
+  
+  // Fallback - any other data is converted to a string and sent
+  if (typeof input.data === 'object') {
+    var jsonString = JSON.stringify(input.data);
+    var bytes = [];
+    for (var i = 0; i < jsonString.length; i++) {
+      bytes.push(jsonString.charCodeAt(i));
+    }
+    return {
+      bytes: bytes,
+      fPort: input.fPort || 1
+    };
+  }
+  
+  // Return empty if nothing matched
+  return {
+    bytes: [],
+    fPort: input.fPort || 1
+  };
 }
 
 // Downlink decoder function (for debugging in console)
