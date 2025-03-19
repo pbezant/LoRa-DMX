@@ -699,70 +699,47 @@ void DmxController::runRainbowChase(int cycles, int speedMs, bool staggered) {
 }
 
 // Calculate and set a single step of the rainbow pattern
-bool DmxController::cycleRainbowStep(uint32_t step, bool staggered) {
+void DmxController::cycleRainbowStep(uint32_t step, bool staggered) {
     if (_fixtures == NULL || _numFixtures <= 0) {
-        return false;
+        return;
     }
     
-    // Clear all channels first
-    clearAllChannels();
-    
-    // Calculate current cycle position (0-1529 representing full color wheel)
-    // Color transitions: R→RG→G→GB→B→BR→R (6 transitions of 255 steps each)
-    int wheelPos = step % (6 * 255);
-    
-    // Set colors for each fixture
+    // Calculate rainbow colors for each fixture
     for (int i = 0; i < _numFixtures; i++) {
-        // If staggered, offset each fixture's position in the color wheel
-        int fixtureWheelPos = wheelPos;
-        if (staggered) {
-            // Offset each fixture by an equal portion of the color wheel
-            fixtureWheelPos = (wheelPos + (i * (6 * 255) / _numFixtures)) % (6 * 255);
-        }
+        // Calculate hue, shift it for each fixture if staggered
+        uint8_t hue = (step + (staggered ? (i * 256 / _numFixtures) : 0)) % 256;
         
-        // Convert wheel position to RGB
-        uint8_t r = 0, g = 0, b = 0;
+        // Convert HSV to RGB (S and V are fixed at 255)
+        RgbwColor color = hsvToRgb(hue, 255, 255);
         
-        if (fixtureWheelPos < 255) {
-            // Red to Yellow (R→RG)
-            r = 255;
-            g = fixtureWheelPos;
-            b = 0;
-        } else if (fixtureWheelPos < 510) {
-            // Yellow to Green (RG→G)
-            r = 255 - (fixtureWheelPos - 255);
-            g = 255;
-            b = 0;
-        } else if (fixtureWheelPos < 765) {
-            // Green to Cyan (G→GB)
-            r = 0;
-            g = 255;
-            b = fixtureWheelPos - 510;
-        } else if (fixtureWheelPos < 1020) {
-            // Cyan to Blue (GB→B)
-            r = 0;
-            g = 255 - (fixtureWheelPos - 765);
-            b = 255;
-        } else if (fixtureWheelPos < 1275) {
-            // Blue to Magenta (B→BR)
-            r = fixtureWheelPos - 1020;
-            g = 0;
-            b = 255;
-        } else {
-            // Magenta to Red (BR→R)
-            r = 255;
-            g = 0;
-            b = 255 - (fixtureWheelPos - 1275);
-        }
-        
-        // Set the fixture colors
-        setFixtureColor(i, r, g, b, 0); // No white channel for rainbow
+        // Set the fixture's color
+        setFixtureColor(i, color.r, color.g, color.b, 0);
     }
     
     // Send the DMX data
     sendData();
+}
+
+// Thread-safe version of the rainbow step function for use with FreeRTOS
+void DmxController::updateRainbowStep(uint32_t step, bool staggered) {
+    if (_fixtures == NULL || _numFixtures <= 0) {
+        return;
+    }
     
-    return true;
+    // Calculate rainbow colors for each fixture
+    for (int i = 0; i < _numFixtures; i++) {
+        // Calculate hue, shift it for each fixture if staggered
+        uint8_t hue = (step + (staggered ? (i * 256 / _numFixtures) : 0)) % 256;
+        
+        // Convert HSV to RGB (S and V are fixed at 255)
+        RgbwColor color = hsvToRgb(hue, 255, 255);
+        
+        // Set the fixture's color
+        setFixtureColor(i, color.r, color.g, color.b, 0);
+    }
+    
+    // Don't send data here - the DMX task will handle it
+    // This just updates the DMX buffer with new values
 }
 
 // Run a strobe test pattern on all fixtures
@@ -1015,4 +992,35 @@ void DmxController::setDefaultWhite() {
         }
         sendData();  // Send data to fixtures
     }
+}
+
+// Helper to convert HSV to RGB for rainbow effects
+RgbwColor DmxController::hsvToRgb(uint8_t h, uint8_t s, uint8_t v) {
+    RgbwColor rgb;
+    
+    // If saturation is 0, it's a shade of gray
+    if (s == 0) {
+        rgb.r = rgb.g = rgb.b = v;
+        rgb.w = 0;
+        return rgb;
+    }
+    
+    uint8_t region = h / 43;
+    uint8_t remainder = (h - (region * 43)) * 6; 
+    
+    uint8_t p = (v * (255 - s)) >> 8;
+    uint8_t q = (v * (255 - ((s * remainder) >> 8))) >> 8;
+    uint8_t t = (v * (255 - ((s * (255 - remainder)) >> 8))) >> 8;
+    
+    switch (region) {
+        case 0:  rgb.r = v; rgb.g = t; rgb.b = p; break;
+        case 1:  rgb.r = q; rgb.g = v; rgb.b = p; break;
+        case 2:  rgb.r = p; rgb.g = v; rgb.b = t; break;
+        case 3:  rgb.r = p; rgb.g = q; rgb.b = v; break;
+        case 4:  rgb.r = t; rgb.g = p; rgb.b = v; break;
+        default: rgb.r = v; rgb.g = p; rgb.b = q; break;
+    }
+    
+    rgb.w = 0; // No white for rainbow effects
+    return rgb;
 } 

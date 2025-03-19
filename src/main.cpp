@@ -115,6 +115,15 @@ bool loraInitialized = false;
 DmxController* dmx = NULL;
 LoRaManager* lora = NULL;
 
+// Add mutex for thread-safe DMX data access
+SemaphoreHandle_t dmxMutex = NULL;
+
+// Add DMX task handle
+TaskHandle_t dmxTaskHandle = NULL;
+
+// Add flag to control DMX during RX windows - set to true to continue DMX during RX windows
+bool keepDmxDuringRx = true;
+
 // Forward declaration of the callback function
 void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port);
 
@@ -130,6 +139,10 @@ unsigned long lastRainbowStep = 0; // Timestamp for last rainbow step
 uint32_t rainbowStepCounter = 0;  // Step counter for rainbow effect
 int rainbowStepDelay = 30;        // Delay between steps in milliseconds
 bool rainbowStaggered = true;     // Whether to stagger colors across fixtures
+
+// Add timing variables for various operations
+unsigned long lastHeartbeat = 0;  // Timestamp for heartbeat messages
+unsigned long lastStatusUpdate = 0; // Timestamp for status updates
 
 // Always process in callback for maximum reliability
 bool processInCallback = true; // Set to true to process commands immediately in callback
@@ -678,11 +691,142 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
     }
     
     // Debug: Log the received data
-    Serial.print("Downlink payload: ");
+    Serial.println("\n----- DOWNLINK PAYLOAD CONTENTS -----");
     Serial.println(payloadStr);
+    Serial.println("-------------------------------------");
     
+    // Check if it's a numeric test command (non-JSON)
+    bool isNumericCommand = true;
+    int numericValue = 0;
+    
+    if (size <= 4) {
+      for (size_t i = 0; i < size; i++) {
+        if (!isdigit(payload[i])) {
+          isNumericCommand = false;
+          break;
+        }
+        numericValue = numericValue * 10 + (payload[i] - '0');
+      }
+    } else {
+      isNumericCommand = false;
+    }
+    
+    if (isNumericCommand) {
+      Serial.print("DETECTED NUMERIC TEST COMMAND: ");
+      Serial.println(numericValue);
+      
+      switch (numericValue) {
+        case 0: Serial.println("COMMAND: Turn all fixtures OFF"); break;
+        case 1: Serial.println("COMMAND: Set all fixtures to RED"); break;
+        case 2: Serial.println("COMMAND: Set all fixtures to GREEN"); break;
+        case 3: Serial.println("COMMAND: Set all fixtures to BLUE"); break;
+        case 4: Serial.println("COMMAND: Set all fixtures to WHITE"); break;
+        default: Serial.println("COMMAND: Unknown numeric command"); break;
+      }
+    }
     // Verify json format is correct
-    if (payloadStr.indexOf("{") != 0 || payloadStr.indexOf("}") != payloadStr.length() - 1) {
+    else if (payloadStr.indexOf("{") == 0 && payloadStr.indexOf("}") == payloadStr.length() - 1) {
+      Serial.println("DETECTED JSON COMMAND");
+      
+      // Parse JSON to display its contents more clearly
+      StaticJsonDocument<MAX_JSON_SIZE> doc;
+      DeserializationError error = deserializeJson(doc, payloadStr);
+      
+      if (!error) {
+        // Determine command type and details
+        if (doc.containsKey("test")) {
+          Serial.println("COMMAND TYPE: Test Pattern");
+          String pattern = doc["test"]["pattern"];
+          Serial.print("PATTERN: ");
+          Serial.println(pattern);
+          
+          // Output other test parameters if present
+          if (pattern == "rainbow") {
+            int cycles = doc["test"]["cycles"] | 3;
+            int speed = doc["test"]["speed"] | 50;
+            bool staggered = doc["test"]["staggered"] | true;
+            Serial.print("PARAMETERS: Cycles=");
+            Serial.print(cycles);
+            Serial.print(", Speed=");
+            Serial.print(speed);
+            Serial.print(", Staggered=");
+            Serial.println(staggered ? "Yes" : "No");
+          }
+          else if (pattern == "strobe") {
+            int color = doc["test"]["color"] | 0;
+            int count = doc["test"]["count"] | 20;
+            Serial.print("PARAMETERS: Color=");
+            Serial.print(color);
+            Serial.print(", Count=");
+            Serial.println(count);
+          }
+          else if (pattern == "continuous") {
+            bool enabled = doc["test"]["enabled"] | false;
+            int speed = doc["test"]["speed"] | 30;
+            Serial.print("PARAMETERS: Enabled=");
+            Serial.print(enabled ? "Yes" : "No");
+            Serial.print(", Speed=");
+            Serial.println(speed);
+          }
+          else if (pattern == "ping") {
+            Serial.println("PARAMETERS: None (Simple Ping)");
+          }
+        }
+        else if (doc.containsKey("lights")) {
+          Serial.println("COMMAND TYPE: Direct Light Control");
+          JsonArray lights = doc["lights"];
+          Serial.print("CONTROLLING ");
+          Serial.print(lights.size());
+          Serial.println(" FIXTURES:");
+          
+          // Output details for each fixture
+          int lightIndex = 0;
+          for (JsonObject light : lights) {
+            int address = light["address"];
+            Serial.print("  FIXTURE #");
+            Serial.print(++lightIndex);
+            Serial.print(": Address=");
+            Serial.print(address);
+            
+            JsonArray channels = light["channels"];
+            Serial.print(", Channels=[");
+            for (size_t i = 0; i < channels.size(); i++) {
+              if (i > 0) Serial.print(",");
+              Serial.print(channels[i].as<int>());
+            }
+            Serial.println("]");
+            
+            // If this looks like RGBW fixture, provide color interpretation
+            if (channels.size() >= 3) {
+              int r = channels[0];
+              int g = channels[1];
+              int b = channels[2];
+              int w = (channels.size() >= 4) ? channels[3] : 0;
+              
+              Serial.print("    COLOR: R=");
+              Serial.print(r);
+              Serial.print(", G=");
+              Serial.print(g);
+              Serial.print(", B=");
+              Serial.print(b);
+              if (channels.size() >= 4) {
+                Serial.print(", W=");
+                Serial.print(w);
+              }
+              Serial.println();
+            }
+          }
+        }
+        else {
+          Serial.println("COMMAND TYPE: Unknown JSON structure");
+        }
+      }
+      else {
+        Serial.print("JSON PARSING ERROR: ");
+        Serial.println(error.c_str());
+      }
+    }
+    else {
       Serial.println("WARNING: Payload doesn't appear to be valid JSON format");
       Serial.println("Attempting to process anyway...");
     }
@@ -772,30 +916,74 @@ void handleDownlink(uint8_t* payload, size_t size, uint8_t port) {
   }
 }
 
+/**
+ * DMX Task - Runs on Core 0 for continuous DMX output
+ * This dedicated task ensures DMX signals are sent continuously without
+ * being interrupted by LoRa operations which run on Core 1
+ */
+void dmxTask(void * parameter) {
+  // Set task priority to high for consistent timing
+  vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
+  
+  Serial.println("DMX task started on Core 0");
+  
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = 20; // 20ms refresh (50Hz)
+  
+  // Initialize the xLastWakeTime variable with the current time
+  xLastWakeTime = xTaskGetTickCount();
+  
+  while(true) {
+    // Check if DMX is initialized
+    if (dmxInitialized && dmx != NULL) {
+      // Take mutex to ensure thread-safe access to DMX data
+      if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+        // Send DMX data - this function now runs uninterrupted by LoRa even during RX windows
+        dmx->sendData();
+        
+        // Give mutex back
+        xSemaphoreGive(dmxMutex);
+      }
+    }
+    
+    // Yield to other tasks at exactly the right refresh frequency
+    // This is more precise than delay() and ensures a stable DMX refresh rate
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
 void setup() {
-  // Initialize Serial for debugging
+  // Initialize Serial at defined baud rate
   Serial.begin(SERIAL_BAUD);
-  Serial.println("\n\n=== DMX LoRa Controller ===");
+  delay(500);
+  Serial.println("\n\n=== DMX LoRa Controller Starting ===");
+  Serial.println("Version: 1.0.0");
   
-  // Initialize diagnostic LED
+  // Configure the diagnostic LED as an output
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);
   
-  Serial.println("Starting setup sequence...");
-  Serial.print("Free heap at start: ");
-  Serial.println(ESP.getFreeHeap());
+  // Blink the LED twice to indicate startup
+  DmxController::blinkLED(LED_PIN, 2, 500);
   
-  // Initialize ESP32 Watchdog Timer
-  Serial.println("Initializing watchdog timer...");
+  // Create mutex for DMX thread safety
+  dmxMutex = xSemaphoreCreateMutex();
+  if (dmxMutex == NULL) {
+    Serial.println("ERROR: Could not create DMX mutex");
+  }
+  
+  // Initialize Watchdog Timer
+  Serial.println("Setting up watchdog timer...");
   esp_task_wdt_init(WDT_TIMEOUT, true);
-  esp_task_wdt_add(NULL); // Add current task to WDT watch
-  Serial.print("Watchdog timeout set to ");
-  Serial.print(WDT_TIMEOUT);
-  Serial.println(" seconds");
+  esp_task_wdt_add(NULL);
+  
+  // Enable continuous DMX during RX windows
+  Serial.println("Enabling continuous DMX during LoRa RX windows");
+  keepDmxDuringRx = true;
   
   // Initialize LoRaWAN
+  Serial.println("\nInitializing LoRaWAN...");
+  
   try {
-    Serial.println("\nInitializing LoRaWAN...");
     lora = new LoRaManager(US915, 2); // US915 band, subband 2
     
     // Set callback for handling downlinks
@@ -878,6 +1066,20 @@ void setup() {
   Serial.print("Free heap after setup: ");
   Serial.println(ESP.getFreeHeap());
   
+  // Start DMX Task on Core 0 to handle continuous DMX output
+  xTaskCreatePinnedToCore(
+      dmxTask,           // Task function
+      "DMX Task",        // Task name
+      10000,             // Stack size
+      NULL,              // Parameters
+      1,                 // Priority (1-configMAX_PRIORITIES)
+      &dmxTaskHandle,    // Task handle
+      0);                // Run on Core 0 (LoRa runs on Core 1)
+  
+  // Report which core this setup function is running on
+  Serial.print("Main setup running on core: ");
+  Serial.println(xPortGetCoreID());
+  
   // Send an uplink message to confirm device is online
   if (loraInitialized) {
     // Add delay before first transmission to ensure network is ready
@@ -904,196 +1106,49 @@ void setup() {
   }
   
   // Final setup indicator
-  digitalWrite(LED_PIN, LOW);
-  Serial.println("\n=== SETUP COMPLETE ===");
+  DmxController::blinkLED(LED_PIN, 3, 200);
 }
 
 void loop() {
-  // Reset the watchdog timer at the beginning of each loop iteration
-  esp_task_wdt_reset();
-  
-  // Ensure all channels are clear at startup
-  if (!dmxInitialized) {
-    return;
-  }
-  
-  // Handle LoRaWAN events - add extra debugging
-  static unsigned long lastEventCheck = 0;
-  static unsigned long lastResetCheck = 0;
+  // Get current time
   unsigned long currentMillis = millis();
   
-  // Handle connection monitoring
-  if (lora != NULL) {
-    // Handle RadioLib events
-    lora->handleEvents();
-    
-    // Check connection health every 2 minutes
-    if (currentMillis - lastResetCheck >= 120000) {
-      lastResetCheck = currentMillis;
-      
-      // If we have consistent failures, consider a reset
-      Serial.println("Checking connection health...");
-      
-      if (!lora->isNetworkJoined()) {
-        Serial.println("WARNING: Not connected to network. Will attempt to rejoin.");
-        
-        // Attempt to rejoin if disconnected
-        if (lora->joinNetwork()) {
-          Serial.println("Successfully reconnected to network!");
-        } else {
-          Serial.println("Failed to reconnect. Will reset in 30 seconds if no improvement.");
-          lastResetCheck = currentMillis - 90000; // Check again in 30 seconds
-        }
-      } else {
-        Serial.println("Connection health check: Good");
-      }
-    }
-    
-    // Debug downlink detection every 10 seconds
-    if (currentMillis - lastEventCheck >= 10000) {
-      lastEventCheck = currentMillis;
-      
-      // For debugging only - not needed in production
-      if (lora->isNetworkJoined()) {
-        Serial.print("Network joined, uptime: ");
-        Serial.print(currentMillis / 1000);
-        Serial.println(" seconds");
-      }
-    }
-  }
-  
-  // Legacy code - should never actually execute now since we process in callback
-  if (dataReceived) {
-    Serial.println("WARNING: Data received flag set but we should have processed in callback!");
-    
-    // Convert payload to string
-    String jsonString = "";
-    for (size_t i = 0; i < receivedDataSize; i++) {
-      jsonString += (char)receivedData[i];
-    }
-    
-    Serial.print("Processing received data from buffer on port ");
-    Serial.print(receivedPort);
-    Serial.print(", data: ");
-    Serial.println(jsonString);
-    
-    // Process the received data as JSON
-    if (jsonString.length() > 0) {
-      processJsonPayload(jsonString);
-    }
-    
-    // Reset the data received flag
-    dataReceived = false;
-    
-    // Clear the received data buffer
-    memset(receivedData, 0, MAX_JSON_SIZE);
-  }
-
-  // Handle continuous rainbow demo mode if enabled
-  if (runningRainbowDemo && dmxInitialized && dmx != NULL) {
-    if (currentMillis - lastRainbowStep >= rainbowStepDelay) {
-      dmx->cycleRainbowStep(rainbowStepCounter++, rainbowStaggered);
-      lastRainbowStep = currentMillis;
-    }
-  }
-  
-  // Static variables for timing
-  static unsigned long lastStatusUpdate = 0;
-  static unsigned long lastHeartbeat = 0;
-  static unsigned long lastDebugPrint = 0;
-  static unsigned long lastDmxRefresh = 0;
-  
-  // Periodically resend DMX data to ensure fixtures receive it
-  if (currentMillis - lastDmxRefresh >= 1000) { // More frequent refresh: every 1 second instead of 5
-    lastDmxRefresh = currentMillis;
-    
-    // Only resend if DMX is initialized
-    if (dmxInitialized && dmx != NULL) {
-      // IMPORTANT: This only resends the CURRENT DMX values without modifying them
-      // This refresh is needed because some DMX fixtures may lose their state if
-      // they don't receive DMX data regularly. This ensures consistent light output.
-      
-      // Send without modifying any values - NO DEBUGGING OUTPUT to minimize timing disruptions
-      dmx->sendData();
-    }
-  }
-  
-  // Print debug information about RX windows every 60 seconds
-  if (currentMillis - lastDebugPrint >= 60000) {
-    lastDebugPrint = currentMillis;
-    
-    // Get RX window timing information
-    int rx1Delay = lora->getRx1Delay();
-    int rx1Timeout = lora->getRx1Timeout();
-    int rx2Timeout = lora->getRx2Timeout();
-    
-    Serial.println("\n----- LoRaWAN RX Window Info -----");
-    Serial.print("RX1 Delay: ");
-    Serial.print(rx1Delay);
-    Serial.println(" seconds");
-    Serial.print("RX1 Window Timeout: ");
-    Serial.print(rx1Timeout);
-    Serial.println(" ms");
-    Serial.print("RX2 Window Timeout: ");
-    Serial.print(rx2Timeout);
-    Serial.println(" ms");
-    Serial.println("----------------------------------\n");
-  }
-  
-  // Send heartbeat ping every 30 seconds to create downlink opportunity
-  if (currentMillis - lastHeartbeat >= 30000) {
-    lastHeartbeat = currentMillis;
-    
-    // Only send heartbeat if lora is initialized and joined
-    if (lora != NULL && lora->isNetworkJoined()) {
-      Serial.println("Sending heartbeat ping (confirmed uplink)...");
-      
-      // Send a minimal payload as confirmed uplink
-      if (lora->sendString("{\"hb\":1}", 1, true)) {
-        Serial.println("Heartbeat ping sent successfully!");
-      } else {
-        Serial.println("Failed to send heartbeat ping.");
-      }
-    }
-  }
-  
-  // Send full status update every 1 minute (reduced from 2 minutes)
-  if (currentMillis - lastStatusUpdate >= 60000) {
-    lastStatusUpdate = currentMillis;
-    
-    // Only send status if lora is initialized and joined
-    if (lora != NULL && lora->isNetworkJoined()) {
-      // Format a status message
-      String message = "{\"status\":\"";
-      message += dmxInitialized ? "DMX_OK" : "DMX_ERROR";
-      message += "\"}";
-      
-      Serial.println("Sending status update (confirmed uplink)...");
-      
-      // Send the status message as a confirmed uplink
-      if (lora->sendString(message, 1, true)) {
-        Serial.println("Status update sent successfully!");
-        // Keep the regular interval of 1 minute for the next update
-      } else {
-        Serial.println("Failed to send status update. Will retry in 30 seconds.");
-        // Adjust the last status update time to retry sooner
-        lastStatusUpdate = currentMillis - 30000;
-      }
-    }
-  }
-  
-  // Blink LED occasionally to show we're alive
-  static unsigned long lastBlink = 0;
-  if (millis() - lastBlink > 5000) {  // Every 5 seconds
-    digitalWrite(LED_PIN, HIGH);
-    delay(50);
-    digitalWrite(LED_PIN, LOW);
-    lastBlink = millis();
-  }
-  
-  // Reset the watchdog timer at the end of each loop iteration too
+  // Reset the watchdog timer
   esp_task_wdt_reset();
   
-  // Short delay to prevent hogging the CPU
-  delay(10);
+  // Main app checks for lora events - this is the only LoRa task on Core 1
+  if (loraInitialized && lora != NULL) {
+    lora->handleEvents();  // Process LoRaWAN events
+  }
+  
+  // Send a heartbeat ping every 60 seconds
+  if (currentMillis - lastHeartbeat >= 60000) {
+    lastHeartbeat = currentMillis;
+    
+    if (loraInitialized && lora != NULL) {
+      Serial.println("Sending heartbeat ping...");
+      String message = "{\"hb\":1}";
+      lora->sendString(message, 1, true);  // Send on port 1, confirmed
+    }
+  }
+  
+  // Only update DMX data when changed (no periodic refresh here since it's handled by the dedicated task)
+  if (runningRainbowDemo && dmxInitialized && dmx != NULL) {
+    if (currentMillis - lastRainbowStep >= rainbowStepDelay) {
+      lastRainbowStep = currentMillis;
+      
+      // Take mutex to safely update DMX data
+      if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+        // Generate rainbow colors
+        dmx->updateRainbowStep(rainbowStepCounter++, rainbowStaggered);
+        
+        // Give mutex back after updating DMX data
+        xSemaphoreGive(dmxMutex);
+      }
+    }
+  }
+  
+  // Yield to allow other tasks to run
+  delay(1);
 }
+

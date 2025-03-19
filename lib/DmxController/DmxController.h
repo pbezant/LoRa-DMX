@@ -161,23 +161,21 @@ public:
     FixtureConfig* getAllFixtures() { return _fixtures; }
 
     /**
-     * Run a rainbow chase test pattern across all fixtures
-     * 
-     * @param cycles Number of complete color cycles to run
-     * @param speedMs Delay between color updates in milliseconds
-     * @param staggered If true, each fixture gets offset colors creating a chase effect
+     * Run a rainbow chase pattern across all fixtures
      */
-    void runRainbowChase(int cycles = 3, int speedMs = 50, bool staggered = true);
-
+    void runRainbowChase(int cycles = 3, int delayMs = 50, bool staggered = true);
+    
     /**
-     * Calculate and set a single step of the rainbow pattern
-     * Useful when you want to control the timing yourself from the main loop
-     * 
-     * @param step Current step in the pattern (incremental counter)
-     * @param staggered If true, each fixture gets offset colors creating a chase effect
-     * @return True if the step was processed successfully
+     * Run a single step of the rainbow animation
+     * This is useful for continuous rainbow mode in the main loop
      */
-    bool cycleRainbowStep(uint32_t step, bool staggered = true);
+    void cycleRainbowStep(uint32_t step, bool staggered = true);
+    
+    /**
+     * Update a single step of the rainbow animation
+     * Thread-safe version for use with FreeRTOS tasks
+     */
+    void updateRainbowStep(uint32_t step, bool staggered = true);
 
     /**
      * Run a strobe test pattern on all fixtures
@@ -236,6 +234,9 @@ private:
     // Internal counter for scanner function
     int _scanCurrentAddr;
     int _scanCurrentColor;
+    
+    // Helper function to convert HSV to RGB for rainbow effects
+    RgbwColor hsvToRgb(uint8_t h, uint8_t s, uint8_t v);
 };
 
 #endif // DMX_CONTROLLER_H 
