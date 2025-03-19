@@ -753,7 +753,7 @@ bool processJsonPayload(const String& jsonString) {
       Serial.print(onTime);
       Serial.print("ms, Off Time: ");
       Serial.print(offTime);
-      Serial.print("ms, Alternate: ");
+      Serial.print(", Alternate: ");
       Serial.println(alternate ? "Yes" : "No");
       
       // Configure test fixtures if none exist
@@ -922,6 +922,115 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
   Serial.print("Free heap at start of downlink handler: ");
   Serial.println(ESP.getFreeHeap());
   
+  // Handle basic binary commands (values 0-4) first before any other processing
+  if (size == 1) {
+    uint8_t cmd = payload[0];
+    
+    // Check if it's a binary value 0-4
+    if (cmd <= 4) {
+      Serial.print("DIRECT BINARY COMMAND DETECTED: ");
+      Serial.println(cmd);
+      
+      if (dmxInitialized && dmx != NULL) {
+        switch (cmd) {
+          case 0:
+            Serial.println("COMMAND: Turn all fixtures OFF");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 0, 0, 0, 0);
+            }
+            break;
+          case 1:
+            Serial.println("COMMAND: Set all fixtures to RED");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 255, 0, 0, 0);
+            }
+            break;
+          case 2:
+            Serial.println("COMMAND: Set all fixtures to GREEN");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 0, 255, 0, 0);
+            }
+            break;
+          case 3:
+            Serial.println("COMMAND: Set all fixtures to BLUE");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 0, 0, 255, 0);
+            }
+            break;
+          case 4:
+            Serial.println("COMMAND: Set all fixtures to WHITE");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 0, 0, 0, 255);
+            }
+            break;
+        }
+        
+        // Send the DMX data and save settings
+        dmx->sendData();
+        dmx->saveSettings();
+        Serial.println("Binary command processed successfully");
+        
+        // Blink LED to indicate successful processing
+        DmxController::blinkLED(LED_PIN, 2, 200);
+        return;  // Exit early - we've processed the command
+      }
+    }
+    
+    // Check for ASCII digit '0'-'4'
+    if (cmd >= '0' && cmd <= '4') {
+      int cmdValue = cmd - '0';  // Convert ASCII to integer
+      Serial.print("ASCII DIGIT COMMAND DETECTED: '");
+      Serial.print((char)cmd);
+      Serial.print("' (");
+      Serial.print(cmdValue);
+      Serial.println(")");
+      
+      if (dmxInitialized && dmx != NULL) {
+        switch (cmdValue) {
+          case 0:
+            Serial.println("COMMAND: Turn all fixtures OFF");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 0, 0, 0, 0);
+            }
+            break;
+          case 1:
+            Serial.println("COMMAND: Set all fixtures to RED");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 255, 0, 0, 0);
+            }
+            break;
+          case 2:
+            Serial.println("COMMAND: Set all fixtures to GREEN");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 0, 255, 0, 0);
+            }
+            break;
+          case 3:
+            Serial.println("COMMAND: Set all fixtures to BLUE");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 0, 0, 255, 0);
+            }
+            break;
+          case 4:
+            Serial.println("COMMAND: Set all fixtures to WHITE");
+            for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              dmx->setFixtureColor(i, 0, 0, 0, 255);
+            }
+            break;
+        }
+        
+        // Send the DMX data and save settings
+        dmx->sendData();
+        dmx->saveSettings();
+        Serial.println("ASCII digit command processed successfully");
+        
+        // Blink LED to indicate successful processing
+        DmxController::blinkLED(LED_PIN, 2, 200);
+        return;  // Exit early - we've processed the command
+      }
+    }
+  }
+  
   // Quick test for any special byte (0xAA or 170 decimal or any other non-standard value)
   if (size == 1 && (payload[0] == 0xAA || payload[0] == 170 || payload[0] == 0xFF || payload[0] == 255)) {
     Serial.println("DIRECT TEST TRIGGER DETECTED - Running test with JSON from README");
@@ -949,83 +1058,6 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
       DmxController::blinkLED(LED_PIN, 5, 200);
       return;
     }
-  }
-  
-  // Add a fallback for testing with hardcoded JSON from README
-  if (size == 2 && payload[0] == 'g' && payload[1] == 'o') {
-    // Special command 'go' to test with hardcoded JSON from README
-    Serial.println("DETECTED SPECIAL TEST COMMAND: Using hardcoded JSON from README");
-    const char* testJson = "{\"lights\":[{\"address\":1,\"channels\":[0,255,0,0]},{\"address\":5,\"channels\":[0,255,0,0]}]}";
-    
-    // Create a copy of the test JSON
-    size_t testSize = strlen(testJson);
-    uint8_t* testPayload = new uint8_t[testSize];
-    memcpy(testPayload, testJson, testSize);
-    
-    // Process it directly
-    Serial.println("Processing with hardcoded JSON:");
-    Serial.println(testJson);
-    
-    // Parse and process JSON
-    StaticJsonDocument<MAX_JSON_SIZE> doc;
-    DeserializationError error = deserializeJson(doc, testJson);
-    
-    if (!error && doc.containsKey("lights")) {
-      JsonArray lights = doc["lights"];
-      Serial.print("Found ");
-      Serial.print(lights.size());
-      Serial.println(" lights in the hardcoded JSON");
-      
-      if (dmxInitialized && dmx != NULL) {
-        // Process the lights array directly
-        bool success = false;
-        
-        for (JsonObject light : lights) {
-          if (light.containsKey("address") && light.containsKey("channels")) {
-            int address = light["address"];
-            JsonArray channels = light["channels"];
-            
-            Serial.print("Setting fixture at address ");
-            Serial.print(address);
-            Serial.print(" with values: ");
-            
-            if (address > 0 && address <= dmx->getNumFixtures() && channels.size() >= 3) {
-              // Get the RGBW values (W optional)
-              int r = channels[0];
-              int g = channels[1];
-              int b = channels[2];
-              int w = (channels.size() >= 4) ? channels[3] : 0;
-              
-              Serial.print("R=");
-              Serial.print(r);
-              Serial.print(", G=");
-              Serial.print(g);
-              Serial.print(", B=");
-              Serial.print(b);
-              if (channels.size() >= 4) {
-                Serial.print(", W=");
-                Serial.print(w);
-              }
-              Serial.println();
-              
-              // Set the fixture color directly
-              dmx->setFixtureColor(address-1, r, g, b, w);
-              success = true;
-            }
-          }
-        }
-        
-        if (success) {
-          dmx->sendData();
-          dmx->saveSettings();
-          Serial.println("HARDCODED JSON processed successfully!");
-          delete[] testPayload;
-          return;
-        }
-      }
-    }
-    
-    delete[] testPayload;
   }
   
   // Enhanced logging for regular payload processing
@@ -1102,7 +1134,6 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
     Serial.println(payloadStr);
     Serial.println("-------------------------------------");
     
-    // Direct handling for known values - TEST MODE
     // First, check for the exact example JSON from README
     if (size == 1) {
       // Single byte command
@@ -1172,8 +1203,6 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
                     // Set the fixture color directly
                     dmx->setFixtureColor(address-1, r, g, b, w);
                     success = true;
-                  } else {
-                    Serial.println("Invalid address or channel count");
                   }
                 }
               }
@@ -1199,10 +1228,10 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
           Serial.println(error.c_str());
         }
       } catch (const std::exception& e) {
-        Serial.print("Exception during JSON processing: ");
+        Serial.print("EXCEPTION in payload analysis: ");
         Serial.println(e.what());
       } catch (...) {
-        Serial.println("Unknown exception during JSON processing");
+        Serial.println("UNKNOWN EXCEPTION in payload analysis");
       }
     }
     
@@ -1212,190 +1241,110 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
       // Break down analysis to track potential crash points
       Serial.println("DEBUG: Starting regular payload analysis");
       
-      // Check if it's a numeric test command (non-JSON)
-      bool isNumericCommand = true;
-      int numericValue = 0;
-      
-      Serial.println("DEBUG: Checking for numeric command");
-      try {
-        if (size <= 4) {
-          for (size_t i = 0; i < size; i++) {
-            if (!isdigit(payload[i])) {
-              isNumericCommand = false;
-              break;
-            }
-            numericValue = numericValue * 10 + (payload[i] - '0');
-          }
-        } else {
-          isNumericCommand = false;
-        }
+      // Check for JSON format if not a numeric command
+      Serial.println("DEBUG: Checking JSON format");
+      if (payloadStr.indexOf("{") == 0 && payloadStr.indexOf("}") == payloadStr.length() - 1) {
+        Serial.println("DETECTED JSON COMMAND");
         
-        Serial.print("DEBUG: isNumericCommand = ");
-        Serial.println(isNumericCommand ? "true" : "false");
+        Serial.println("DEBUG: Attempting to parse JSON");
+        // Parse JSON to display its contents more clearly
+        StaticJsonDocument<MAX_JSON_SIZE> doc;
+        DeserializationError error = deserializeJson(doc, payloadStr);
         
-        if (isNumericCommand) {
-          Serial.print("DETECTED NUMERIC TEST COMMAND: ");
-          Serial.println(numericValue);
-          
-          if (dmxInitialized && dmx != NULL) {
-            switch (numericValue) {
-              case 0:
-                Serial.println("COMMAND: Turn all fixtures OFF");
-                for (int i = 0; i < dmx->getNumFixtures(); i++) {
-                  dmx->setFixtureColor(i, 0, 0, 0, 0);
-                }
-                break;
-              case 1:
-                Serial.println("COMMAND: Set all fixtures to RED");
-                for (int i = 0; i < dmx->getNumFixtures(); i++) {
-                  dmx->setFixtureColor(i, 255, 0, 0, 0);
-                }
-                break;
-              case 2:
-                Serial.println("COMMAND: Set all fixtures to GREEN");
-                for (int i = 0; i < dmx->getNumFixtures(); i++) {
-                  dmx->setFixtureColor(i, 0, 255, 0, 0);
-                }
-                break;
-              case 3:
-                Serial.println("COMMAND: Set all fixtures to BLUE");
-                for (int i = 0; i < dmx->getNumFixtures(); i++) {
-                  dmx->setFixtureColor(i, 0, 0, 255, 0);
-                }
-                break;
-              case 4:
-                Serial.println("COMMAND: Set all fixtures to WHITE");
-                for (int i = 0; i < dmx->getNumFixtures(); i++) {
-                  dmx->setFixtureColor(i, 0, 0, 0, 255);
-                }
-                break;
-              default:
-                Serial.println("COMMAND: Unknown numeric command");
-                break;
-            }
+        if (!error) {
+          Serial.println("DEBUG: JSON parsed successfully");
+          // Determine command type and details
+          if (doc.containsKey("test")) {
+            Serial.println("COMMAND TYPE: Test Pattern");
+            String pattern = doc["test"]["pattern"];
+            Serial.print("PATTERN: ");
+            Serial.println(pattern);
             
-            // Send the data to the fixtures and save settings
-            dmx->sendData();
-            dmx->saveSettings();
-            Serial.println("Numeric command processed and DMX data sent");
-            return; // Command processed successfully
+            // Output other test parameters if present
+            if (pattern == "rainbow") {
+              int cycles = doc["test"]["cycles"] | 3;
+              int speed = doc["test"]["speed"] | 50;
+              bool staggered = doc["test"]["staggered"] | true;
+              Serial.print("PARAMETERS: Cycles=");
+              Serial.print(cycles);
+              Serial.print(", Speed=");
+              Serial.print(speed);
+              Serial.print(", Staggered=");
+              Serial.println(staggered ? "Yes" : "No");
+            }
+            else if (pattern == "strobe") {
+              int color = doc["test"]["color"] | 0;
+              int count = doc["test"]["count"] | 20;
+              Serial.print("PARAMETERS: Color=");
+              Serial.print(color);
+              Serial.print(", Count=");
+              Serial.println(count);
+            }
+            else if (pattern == "continuous") {
+              bool enabled = doc["test"]["enabled"] | false;
+              int speed = doc["test"]["speed"] | 30;
+              Serial.print("PARAMETERS: Enabled=");
+              Serial.print(enabled ? "Yes" : "No");
+              Serial.print(", Speed=");
+              Serial.println(speed);
+            }
+            else if (pattern == "ping") {
+              Serial.println("PARAMETERS: None (Simple Ping)");
+            }
           }
-        }
-        
-        // Check for JSON format if not a numeric command
-        Serial.println("DEBUG: Checking JSON format");
-        if (payloadStr.indexOf("{") == 0 && payloadStr.indexOf("}") == payloadStr.length() - 1) {
-          Serial.println("DETECTED JSON COMMAND");
-          
-          Serial.println("DEBUG: Attempting to parse JSON");
-          // Parse JSON to display its contents more clearly
-          StaticJsonDocument<MAX_JSON_SIZE> doc;
-          DeserializationError error = deserializeJson(doc, payloadStr);
-          
-          if (!error) {
-            Serial.println("DEBUG: JSON parsed successfully");
-            // Determine command type and details
-            if (doc.containsKey("test")) {
-              Serial.println("COMMAND TYPE: Test Pattern");
-              String pattern = doc["test"]["pattern"];
-              Serial.print("PATTERN: ");
-              Serial.println(pattern);
+          else if (doc.containsKey("lights")) {
+            Serial.println("COMMAND TYPE: Direct Light Control");
+            JsonArray lights = doc["lights"];
+            Serial.print("CONTROLLING ");
+            Serial.print(lights.size());
+            Serial.println(" FIXTURES:");
+            
+            // Output details for each fixture
+            int lightIndex = 0;
+            for (JsonObject light : lights) {
+              int address = light["address"];
+              Serial.print("  FIXTURE #");
+              Serial.print(++lightIndex);
+              Serial.print(": Address=");
+              Serial.print(address);
               
-              // Output other test parameters if present
-              if (pattern == "rainbow") {
-                int cycles = doc["test"]["cycles"] | 3;
-                int speed = doc["test"]["speed"] | 50;
-                bool staggered = doc["test"]["staggered"] | true;
-                Serial.print("PARAMETERS: Cycles=");
-                Serial.print(cycles);
-                Serial.print(", Speed=");
-                Serial.print(speed);
-                Serial.print(", Staggered=");
-                Serial.println(staggered ? "Yes" : "No");
+              JsonArray channels = light["channels"];
+              Serial.print(", Channels=[");
+              for (size_t i = 0; i < channels.size(); i++) {
+                if (i > 0) Serial.print(",");
+                Serial.print(channels[i].as<int>());
               }
-              else if (pattern == "strobe") {
-                int color = doc["test"]["color"] | 0;
-                int count = doc["test"]["count"] | 20;
-                Serial.print("PARAMETERS: Color=");
-                Serial.print(color);
-                Serial.print(", Count=");
-                Serial.println(count);
-              }
-              else if (pattern == "continuous") {
-                bool enabled = doc["test"]["enabled"] | false;
-                int speed = doc["test"]["speed"] | 30;
-                Serial.print("PARAMETERS: Enabled=");
-                Serial.print(enabled ? "Yes" : "No");
-                Serial.print(", Speed=");
-                Serial.println(speed);
-              }
-              else if (pattern == "ping") {
-                Serial.println("PARAMETERS: None (Simple Ping)");
-              }
-            }
-            else if (doc.containsKey("lights")) {
-              Serial.println("COMMAND TYPE: Direct Light Control");
-              JsonArray lights = doc["lights"];
-              Serial.print("CONTROLLING ");
-              Serial.print(lights.size());
-              Serial.println(" FIXTURES:");
+              Serial.println("]");
               
-              // Output details for each fixture
-              int lightIndex = 0;
-              for (JsonObject light : lights) {
-                int address = light["address"];
-                Serial.print("  FIXTURE #");
-                Serial.print(++lightIndex);
-                Serial.print(": Address=");
-                Serial.print(address);
+              // If this looks like RGBW fixture, provide color interpretation
+              if (channels.size() >= 3) {
+                int r = channels[0];
+                int g = channels[1];
+                int b = channels[2];
+                int w = (channels.size() >= 4) ? channels[3] : 0;
                 
-                JsonArray channels = light["channels"];
-                Serial.print(", Channels=[");
-                for (size_t i = 0; i < channels.size(); i++) {
-                  if (i > 0) Serial.print(",");
-                  Serial.print(channels[i].as<int>());
+                Serial.print("    COLOR: R=");
+                Serial.print(r);
+                Serial.print(", G=");
+                Serial.print(g);
+                Serial.print(", B=");
+                Serial.print(b);
+                if (channels.size() >= 4) {
+                  Serial.print(", W=");
+                  Serial.print(w);
                 }
-                Serial.println("]");
-                
-                // If this looks like RGBW fixture, provide color interpretation
-                if (channels.size() >= 3) {
-                  int r = channels[0];
-                  int g = channels[1];
-                  int b = channels[2];
-                  int w = (channels.size() >= 4) ? channels[3] : 0;
-                  
-                  Serial.print("    COLOR: R=");
-                  Serial.print(r);
-                  Serial.print(", G=");
-                  Serial.print(g);
-                  Serial.print(", B=");
-                  Serial.print(b);
-                  if (channels.size() >= 4) {
-                    Serial.print(", W=");
-                    Serial.print(w);
-                  }
-                  Serial.println();
-                }
+                Serial.println();
               }
-            }
-            else {
-              Serial.println("COMMAND TYPE: Unknown JSON structure");
             }
           }
           else {
-            Serial.print("JSON PARSING ERROR: ");
-            Serial.println(error.c_str());
+            Serial.println("COMMAND TYPE: Unknown JSON structure");
           }
         }
         else {
-          Serial.println("WARNING: Payload doesn't appear to be valid JSON format");
-          Serial.println("Attempting to process anyway...");
+          Serial.print("JSON PARSING ERROR: ");
+          Serial.println(error.c_str());
         }
-      } catch (const std::exception& e) {
-        Serial.print("EXCEPTION in payload analysis: ");
-        Serial.println(e.what());
-      } catch (...) {
-        Serial.println("UNKNOWN EXCEPTION in payload analysis");
       }
       
       // Always process the command directly in the callback
