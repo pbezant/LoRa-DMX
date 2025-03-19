@@ -289,6 +289,259 @@ bool processLightsJson(JsonArray lightsArray) {
   return false;
 }
 
+// Add pattern handler class before the main setup() function
+class DmxPattern {
+public:
+  enum PatternType {
+    NONE,
+    COLOR_FADE,
+    RAINBOW,
+    STROBE,
+    CHASE,
+    ALTERNATE
+  };
+
+  DmxPattern() : active(false), patternType(NONE), speed(50), step(0), lastUpdate(0), cycleCount(0), maxCycles(5) {}
+
+  void start(PatternType type, int patternSpeed, int cycles = 5) {
+    active = true;
+    patternType = type;
+    speed = patternSpeed;
+    step = 0;
+    cycleCount = 0;
+    maxCycles = cycles;
+    lastUpdate = millis();
+    
+    Serial.print("Pattern started: ");
+    switch (patternType) {
+      case COLOR_FADE: Serial.println("COLOR_FADE"); break;
+      case RAINBOW: Serial.println("RAINBOW"); break;
+      case STROBE: Serial.println("STROBE"); break;
+      case CHASE: Serial.println("CHASE"); break;
+      case ALTERNATE: Serial.println("ALTERNATE"); break;
+      default: Serial.println("UNKNOWN");
+    }
+  }
+
+  void stop() {
+    active = false;
+    patternType = NONE;
+    Serial.println("Pattern stopped");
+  }
+  
+  bool isActive() {
+    return active;
+  }
+  
+  void update() {
+    if (!active || !dmxInitialized || dmx == NULL) {
+      return;
+    }
+    
+    unsigned long now = millis();
+    if (now - lastUpdate < speed) {
+      return;
+    }
+    
+    lastUpdate = now;
+    
+    switch (patternType) {
+      case COLOR_FADE:
+        updateColorFade();
+        break;
+      case RAINBOW:
+        updateRainbow();
+        break;
+      case STROBE:
+        updateStrobe();
+        break;
+      case CHASE:
+        updateChase();
+        break;
+      case ALTERNATE:
+        updateAlternate();
+        break;
+      default:
+        break;
+    }
+    
+    // Send the DMX data
+    dmx->sendData();
+  }
+
+private:
+  bool active;
+  PatternType patternType;
+  int speed;  // Time in ms between updates
+  int step;   // Current step in the pattern
+  unsigned long lastUpdate;
+  int cycleCount;
+  int maxCycles;
+  
+  // HSV to RGB conversion for color effects
+  void hsvToRgb(float h, float s, float v, uint8_t& r, uint8_t& g, uint8_t& b) {
+    float c = v * s;
+    float x = c * (1 - abs(fmod(h / 60.0, 2) - 1));
+    float m = v - c;
+    
+    float r1, g1, b1;
+    if (h < 60) {
+      r1 = c; g1 = x; b1 = 0;
+    } else if (h < 120) {
+      r1 = x; g1 = c; b1 = 0;
+    } else if (h < 180) {
+      r1 = 0; g1 = c; b1 = x;
+    } else if (h < 240) {
+      r1 = 0; g1 = x; b1 = c;
+    } else if (h < 300) {
+      r1 = x; g1 = 0; b1 = c;
+    } else {
+      r1 = c; g1 = 0; b1 = x;
+    }
+    
+    r = (r1 + m) * 255;
+    g = (g1 + m) * 255;
+    b = (b1 + m) * 255;
+  }
+  
+  // Color fade pattern (gradually cycles through colors)
+  void updateColorFade() {
+    float hue = (step % 360);
+    step = (step + 2) % 360;
+    
+    uint8_t r, g, b;
+    hsvToRgb(hue, 1.0, 1.0, r, g, b);
+    
+    // Set all fixtures to the same color
+    int numFixtures = dmx->getNumFixtures();
+    for (int i = 0; i < numFixtures; i++) {
+      dmx->setFixtureColor(i, r, g, b, 0);
+    }
+    
+    // Check if we've completed a cycle
+    if (step == 0) {
+      cycleCount++;
+      if (cycleCount >= maxCycles && maxCycles > 0) {
+        stop();
+      }
+    }
+  }
+  
+  // Rainbow pattern (different color on each fixture)
+  void updateRainbow() {
+    int numFixtures = dmx->getNumFixtures();
+    if (numFixtures == 0) return;
+    
+    // Calculate hue offset for this step
+    int baseHue = step % 360;
+    step = (step + 5) % 360;
+    
+    // Distribute colors across fixtures
+    for (int i = 0; i < numFixtures; i++) {
+      float hue = fmod(baseHue + (360.0 * i / numFixtures), 360);
+      
+      uint8_t r, g, b;
+      hsvToRgb(hue, 1.0, 1.0, r, g, b);
+      
+      dmx->setFixtureColor(i, r, g, b, 0);
+    }
+    
+    // Check if we've completed a cycle
+    if (step == 0) {
+      cycleCount++;
+      if (cycleCount >= maxCycles && maxCycles > 0) {
+        stop();
+      }
+    }
+  }
+  
+  // Strobe pattern (flash on and off)
+  void updateStrobe() {
+    bool isOn = (step % 2) == 0;
+    step++;
+    
+    int numFixtures = dmx->getNumFixtures();
+    for (int i = 0; i < numFixtures; i++) {
+      if (isOn) {
+        dmx->setFixtureColor(i, 255, 255, 255, 255);  // White when on
+      } else {
+        dmx->setFixtureColor(i, 0, 0, 0, 0);  // Off
+      }
+    }
+    
+    // Count each on-off cycle as one complete cycle
+    if (step % 2 == 0) {
+      cycleCount++;
+      if (cycleCount >= maxCycles && maxCycles > 0) {
+        stop();
+      }
+    }
+  }
+  
+  // Chase pattern (one light at a time)
+  void updateChase() {
+    int numFixtures = dmx->getNumFixtures();
+    if (numFixtures == 0) return;
+    
+    int activeFixture = step % numFixtures;
+    step = (step + 1) % numFixtures;
+    
+    // Turn all fixtures off first
+    for (int i = 0; i < numFixtures; i++) {
+      if (i == activeFixture) {
+        // This fixture gets the color - use a rotating hue
+        uint8_t r, g, b;
+        float hue = (cycleCount * 30) % 360;  // Change color every full chase cycle
+        hsvToRgb(hue, 1.0, 1.0, r, g, b);
+        
+        dmx->setFixtureColor(i, r, g, b, 0);
+      } else {
+        dmx->setFixtureColor(i, 0, 0, 0, 0);
+      }
+    }
+    
+    // Count a full chase sequence as one complete cycle
+    if (step == 0) {
+      cycleCount++;
+      if (cycleCount >= maxCycles && maxCycles > 0) {
+        stop();
+      }
+    }
+  }
+  
+  // Alternating pattern (every other fixture)
+  void updateAlternate() {
+    int numFixtures = dmx->getNumFixtures();
+    bool flipState = (step % 2) == 0;
+    step++;
+    
+    for (int i = 0; i < numFixtures; i++) {
+      bool isOn = (i % 2 == 0) ? flipState : !flipState;
+      
+      if (isOn) {
+        uint8_t r, g, b;
+        float hue = (cycleCount * 40) % 360;  // Change color every flip
+        hsvToRgb(hue, 1.0, 1.0, r, g, b);
+        
+        dmx->setFixtureColor(i, r, g, b, 0);
+      } else {
+        dmx->setFixtureColor(i, 0, 0, 0, 0);
+      }
+    }
+    
+    // Count each on-off alternation as one complete cycle
+    if (step % 2 == 0) {
+      cycleCount++;
+      if (cycleCount >= maxCycles && maxCycles > 0) {
+        stop();
+      }
+    }
+  }
+};
+
+// Create a global pattern handler
+DmxPattern patternHandler;
+
 /**
  * Process JSON payload and control DMX fixtures
  * 
@@ -332,113 +585,94 @@ bool processLightsJson(JsonArray lightsArray) {
  * @return true if processing was successful, false otherwise
  */
 bool processJsonPayload(const String& jsonString) {
-  Serial.println("Processing JSON payload: " + jsonString);
-  
-  // Check for special test commands (non-JSON) first
-  if (jsonString.length() <= 4 && jsonString.length() > 0) {
-    // Try to parse as a simple test command (numeric)
-    int testCmd = 0;
-    bool isTestCmd = true;
-    
-    for (size_t i = 0; i < jsonString.length(); i++) {
-      if (isdigit(jsonString[i])) {
-        testCmd = testCmd * 10 + (jsonString[i] - '0');
-      } else {
-        isTestCmd = false;
-        break;
-      }
-    }
-    
-    if (isTestCmd) {
-      Serial.print("Detected numeric test command: ");
-      Serial.println(testCmd);
-      
-      // Handle different test codes
-      switch (testCmd) {
-        case 1: // Set all fixtures to RED
-          Serial.println("TEST 1: Setting all fixtures to RED");
-          for (int i = 0; i < dmx->getNumFixtures(); i++) {
-            dmx->setFixtureColor(i, 255, 0, 0, 0);
-          }
-          dmx->sendData();
-          dmx->saveSettings();
-          return true;
-          
-        case 2: // Set all fixtures to GREEN
-          Serial.println("TEST 2: Setting all fixtures to GREEN");
-          for (int i = 0; i < dmx->getNumFixtures(); i++) {
-            dmx->setFixtureColor(i, 0, 255, 0, 0);
-          }
-          dmx->sendData();
-          dmx->saveSettings();
-          return true;
-          
-        case 3: // Set all fixtures to BLUE
-          Serial.println("TEST 3: Setting all fixtures to BLUE");
-          for (int i = 0; i < dmx->getNumFixtures(); i++) {
-            dmx->setFixtureColor(i, 0, 0, 255, 0);
-          }
-          dmx->sendData();
-          dmx->saveSettings();
-          return true;
-          
-        case 4: // Set all fixtures to WHITE
-          Serial.println("TEST 4: Setting all fixtures to WHITE");
-          for (int i = 0; i < dmx->getNumFixtures(); i++) {
-            dmx->setFixtureColor(i, 0, 0, 0, 255);
-          }
-          dmx->sendData();
-          dmx->saveSettings();
-          return true;
-          
-        case 0: // Turn all fixtures OFF
-          Serial.println("TEST 0: Turning all fixtures OFF");
-          dmx->clearAllChannels();
-          dmx->sendData();
-          dmx->saveSettings();
-          return true;
-          
-        default:
-          Serial.println("Unknown test command, ignoring");
-          break;
-      }
-    }
-  }
-  
-  // Continue with normal JSON processing
-  // Create a JSON document
   StaticJsonDocument<MAX_JSON_SIZE> doc;
-  
-  // Parse the JSON string
   DeserializationError error = deserializeJson(doc, jsonString);
-  
-  // Check for parsing errors
+
   if (error) {
-    Serial.print("JSON parsing failed: ");
+    Serial.print("JSON parsing error: ");
     Serial.println(error.c_str());
-    
-    // Try to debug the JSON string
-    Serial.print("JSON string length: ");
-    Serial.println(jsonString.length());
-    Serial.print("First 32 bytes: ");
-    for (int i = 0; i < min(32, (int)jsonString.length()); i++) {
-      Serial.print(jsonString[i]);
-    }
-    Serial.println();
-    
-    // Print hex for debugging
-    Serial.print("Hex: ");
-    for (int i = 0; i < min(32, (int)jsonString.length()); i++) {
-      if (jsonString[i] < 16) Serial.print("0");
-      Serial.print(jsonString[i], HEX);
-      Serial.print(" ");
-    }
-    Serial.println();
-    
     return false;
   }
-  
-  // Check if this is a test pattern command
+
+  Serial.print("Processing JSON payload: ");
+  Serial.println(jsonString);
+
+  // First, check for pattern commands
+  if (doc.containsKey("pattern")) {
+    // Handle both object and string pattern formats
+    if (doc["pattern"].is<JsonObject>()) {
+      // Object format - {"pattern": {"type": "rainbow", "speed": 50}}
+      JsonObject pattern = doc["pattern"];
+      if (pattern.containsKey("type")) {
+        String type = pattern["type"];
+        int speed = pattern["speed"] | 50;  // Default 50ms
+        int cycles = pattern["cycles"] | 5;  // Default 5 cycles
+        
+        DmxPattern::PatternType patternType = DmxPattern::NONE;
+        
+        if (type == "colorFade") {
+          patternType = DmxPattern::COLOR_FADE;
+        } else if (type == "rainbow") {
+          patternType = DmxPattern::RAINBOW;
+        } else if (type == "strobe") {
+          patternType = DmxPattern::STROBE;
+          speed = pattern["speed"] | 100;  // Slower default for strobe
+        } else if (type == "chase") {
+          patternType = DmxPattern::CHASE;
+        } else if (type == "alternate") {
+          patternType = DmxPattern::ALTERNATE;
+        } else if (type == "stop") {
+          patternHandler.stop();
+          return true;
+        }
+        
+        if (patternType != DmxPattern::NONE) {
+          patternHandler.start(patternType, speed, cycles);
+          return true;
+        }
+      }
+    } else if (doc["pattern"].is<String>()) {
+      // String format - {"pattern": "rainbow"}
+      String patternType = doc["pattern"].as<String>();
+      Serial.print("Simple pattern format detected: ");
+      Serial.println(patternType);
+      
+      // Default values for each pattern
+      int speed = 50;
+      int cycles = 5;
+      DmxPattern::PatternType type = DmxPattern::NONE;
+      
+      if (patternType == "colorFade") {
+        type = DmxPattern::COLOR_FADE;
+      } else if (patternType == "rainbow") {
+        type = DmxPattern::RAINBOW;
+        cycles = 3;
+      } else if (patternType == "strobe") {
+        type = DmxPattern::STROBE;
+        speed = 100;
+        cycles = 10;
+      } else if (patternType == "chase") {
+        type = DmxPattern::CHASE;
+        speed = 200;
+        cycles = 3;
+      } else if (patternType == "alternate") {
+        type = DmxPattern::ALTERNATE;
+        speed = 300;
+        cycles = 5;
+      } else if (patternType == "stop") {
+        patternHandler.stop();
+        return true;
+      }
+      
+      if (type != DmxPattern::NONE) {
+        Serial.println("Starting pattern...");
+        patternHandler.start(type, speed, cycles);
+        return true;
+      }
+    }
+  }
+
+  // Then check for test commands
   if (doc.containsKey("test")) {
     // Get the test object
     JsonObject testObj = doc["test"];
@@ -619,8 +853,8 @@ bool processJsonPayload(const String& jsonString) {
       return false;
     }
   }
-  // Check if this is a direct light control command
-  else if (doc.containsKey("lights")) {
+  // Finally check for direct light control
+  if (doc.containsKey("lights")) {
     // Get the lights array
     JsonArray lightsArray = doc["lights"];
     
@@ -636,10 +870,10 @@ bool processJsonPayload(const String& jsonString) {
       return false;
     }
   }
-  else {
-    Serial.println("JSON format error: missing 'lights' or 'test' object");
-    return false;
-  }
+
+  // If we got here, no valid command objects were found
+  Serial.println("JSON format error: missing 'lights', 'pattern', or 'test' object");
+  return false;
 }
 
 // Add this helper function at the end of the file, before the loop() function
@@ -1487,6 +1721,11 @@ void loop() {
         xSemaphoreGive(dmxMutex);
       }
     }
+  }
+  
+  // Update pattern (if active)
+  if (patternHandler.isActive()) {
+    patternHandler.update();
   }
   
   // Yield to allow other tasks to run

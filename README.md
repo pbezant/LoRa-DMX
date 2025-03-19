@@ -143,6 +143,43 @@ For quick testing, the payload formatter supports simplified commands:
 - `{"command": "white"}` - Set all fixtures to white
 - `{"command": "off"}` - Turn all fixtures off
 
+## Light Pattern Commands
+
+The system supports dynamic light pattern effects through downlink commands:
+
+### Simple Pattern Commands (Easy to use)
+- `{"pattern": "colorFade"}` - Smoothly transitions through all colors
+- `{"pattern": "rainbow"}` - Creates a rainbow effect across multiple fixtures
+- `{"pattern": "strobe"}` - Flashes all fixtures on and off
+- `{"pattern": "chase"}` - Creates a chasing light effect
+- `{"pattern": "alternate"}` - Alternates between fixtures
+- `{"pattern": "stop"}` - Stops any currently running pattern
+
+### Advanced Pattern Control
+For more control over pattern behavior, you can specify parameters:
+
+```json
+{
+  "pattern": {
+    "type": "colorFade",
+    "speed": 30,
+    "cycles": 10
+  }
+}
+```
+
+#### Parameters:
+- `type`: Pattern type (colorFade, rainbow, strobe, chase, alternate)
+- `speed`: Update speed in milliseconds (lower = faster)
+- `cycles`: Number of cycles to run before stopping (0 = infinite)
+
+#### Default values:
+- colorFade: speed=50ms, cycles=5
+- rainbow: speed=50ms, cycles=3
+- strobe: speed=100ms, cycles=10
+- chase: speed=200ms, cycles=3
+- alternate: speed=300ms, cycles=5
+
 ## Example Commands
 
 1. **Green Fixtures (All addresses 1-4)**
@@ -252,6 +289,59 @@ For quick testing, the payload formatter supports simplified commands:
    ```
    - Purpose: Create a rainbow effect across multiple fixtures
    - Device Action: Sets each fixture to a different color in the rainbow spectrum
+
+5. **Rainbow Pattern (Dynamic)**
+   ```json
+   {
+     "pattern": "rainbow"
+   }
+   ```
+   - Purpose: Create an animated rainbow effect that cycles through all fixtures
+   - Device Action: Continuously updates fixtures with different colors in a rainbow pattern
+
+6. **Color Fade Pattern**
+   ```json
+   {
+     "pattern": {
+       "type": "colorFade",
+       "speed": 30,
+       "cycles": 10
+     }
+   }
+   ```
+   - Purpose: Create a smooth transition through all colors
+   - Device Action: Gradually fades all fixtures through the color spectrum
+
+7. **Strobe Effect**
+   ```json
+   {
+     "pattern": {
+       "type": "strobe",
+       "speed": 100,
+       "cycles": 20
+     }
+   }
+   ```
+   - Purpose: Create a strobe light effect
+   - Device Action: Rapidly flashes all fixtures on and off
+
+8. **Chase Pattern**
+   ```json
+   {
+     "pattern": "chase"
+   }
+   ```
+   - Purpose: Create a "chasing lights" effect
+   - Device Action: Lights up one fixture at a time in sequence
+
+9. **Stop Patterns**
+   ```json
+   {
+     "pattern": "stop"
+   }
+   ```
+   - Purpose: Stop any currently running pattern
+   - Device Action: Stops pattern execution and leaves fixtures in their current state
 
 ## Troubleshooting
 

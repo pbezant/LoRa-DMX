@@ -112,7 +112,70 @@ function encodeDownlink(input) {
     };
   }
   
-  // CASE 4: Lights JSON object - proper DMX control
+  // CASE 4: Pattern commands
+  if (input.data.pattern) {
+    // Create a proper pattern command object
+    var patternObj = {pattern: {}};
+    
+    // Handle direct pattern names as shortcuts
+    if (typeof input.data.pattern === 'string') {
+      patternObj.pattern.type = input.data.pattern;
+      
+      // Apply default values for each pattern type
+      switch (input.data.pattern) {
+        case 'colorFade':
+          patternObj.pattern.speed = 50;
+          patternObj.pattern.cycles = 5;
+          break;
+        case 'rainbow':
+          patternObj.pattern.speed = 50;
+          patternObj.pattern.cycles = 3;
+          break;
+        case 'strobe':
+          patternObj.pattern.speed = 100;
+          patternObj.pattern.cycles = 10;
+          break;
+        case 'chase':
+          patternObj.pattern.speed = 200;
+          patternObj.pattern.cycles = 3;
+          break;
+        case 'alternate':
+          patternObj.pattern.speed = 300;
+          patternObj.pattern.cycles = 5;
+          break;
+        case 'stop':
+          // Just stop the current pattern
+          patternObj.pattern.type = 'stop';
+          break;
+      }
+    } 
+    // Handle full pattern object with parameters
+    else if (typeof input.data.pattern === 'object') {
+      patternObj.pattern = input.data.pattern;
+      
+      // Ensure the type is specified
+      if (!patternObj.pattern.type) {
+        return {
+          bytes: [],
+          fPort: input.fPort || 1
+        };
+      }
+    }
+    
+    // Convert to JSON string and then to bytes
+    var jsonString = JSON.stringify(patternObj);
+    var bytes = [];
+    for (var i = 0; i < jsonString.length; i++) {
+      bytes.push(jsonString.charCodeAt(i));
+    }
+    
+    return {
+      bytes: bytes,
+      fPort: input.fPort || 1
+    };
+  }
+  
+  // CASE 5: Lights JSON object - proper DMX control
   if (input.data.lights) {
     // Convert the JSON object to a string
     var jsonString = JSON.stringify({lights: input.data.lights});
