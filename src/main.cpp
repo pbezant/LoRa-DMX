@@ -142,6 +142,12 @@ unsigned long lastStatusUpdate = 0; // Timestamp for status updates
 unsigned long lastClassCCheck = 0;  // Timestamp for Class C mode check
 unsigned long lastJoinAttempt = 0;  // Timestamp for last join attempt
 
+// LoRaWAN credentials
+uint64_t joinEUI = 0;  // Join EUI (AppEUI in LoRaWAN 1.0.x)
+uint64_t devEUI = 0;   // Device EUI
+String appKeyHex;      // Application Key as hex string
+String nwkKeyHex;      // Network Key as hex string
+
 // Always process in callback for maximum reliability
 bool processInCallback = true; // Set to true to process commands immediately in callback
 
@@ -1133,6 +1139,14 @@ void setup() {
     
     // Set callback for handling downlinks
     lora->setDownlinkCallback(handleDownlinkCallback);
+    
+    // Set up LoRaWAN credentials from secrets.h
+    Serial.println("Setting up LoRaWAN credentials...");
+    // Convert string defines to the required formats
+    sscanf(APPEUI, "%llx", &joinEUI);  // APPEUI is used as joinEUI in LoRaWAN 1.0
+    sscanf(DEVEUI, "%llx", &devEUI);
+    appKeyHex = String(APPKEY);  // Already in correct format
+    nwkKeyHex = String(NWKKEY);  // Already in correct format
     
     // Initialize LoRaWAN with the provided credentials
     if (lora->begin(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RESET_PIN, LORA_BUSY_PIN)) {

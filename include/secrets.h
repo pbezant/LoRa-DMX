@@ -1,19 +1,26 @@
-#ifndef SECRETS_H
-#define SECRETS_H
+#pragma once
 
-#include <stdint.h>
-#include <Arduino.h>  // For String class
+// LoRaWAN credentials
+// Replace these with your actual device credentials from your LoRaWAN network server
+// (e.g., The Things Network, Helium, etc.)
 
-// LoRaWAN Credentials
-const uint64_t joinEUI = 0x0000000000000001; // 0000000000000001
-const uint64_t devEUI = 0x70B3D57ED80041B2;  // 70B3D57ED80041B2
+// Device EUI (8 bytes, hex format without spaces)
+#define DEVEUI "90cff868ef8bd4cc"
 
-// Keys in byte array format
-uint8_t appKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // 45D37BF37761A61F9F071FE16D4F5777
-uint8_t nwkKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // Same as appKey for OTAA
+// Application EUI (8 bytes, hex format without spaces)
+#define APPEUI "ed733220d2a9f133"
 
-// Alternative format using hex strings (uncomment if you want to use this method instead)
-const String appKeyHex = "45D37BF37761A61F9F071FE16D4F5777";
-const String nwkKeyHex = "45D37BF37761A61F9F071FE16D4F5777";
+// Application Key (16 bytes, hex format without spaces)
+#define APPKEY "FF20F547E69E9DBD2F30C4E66FBEF960"
 
-#endif // SECRETS_H 
+// Network Key (16 bytes, hex format without spaces)
+// For LoRaWAN 1.1, this should be a different key than APPKEY
+// For LoRaWAN 1.0.x, this can be the same as APPKEY
+#define NWKKEY "FF20F547E69E9DBD2F30C4E66FBEF960"
+
+// Note: For security reasons, it's recommended to store these credentials
+// in a separate file that is not committed to version control.
+// You should replace these placeholder values with your actual credentials.
+
+// Replace with your actual keys when using LoRaWAN
+// For direct P2P LoRa communication, these are not used 
