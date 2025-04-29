@@ -74,7 +74,7 @@
 #include "LoRaManager.h"
 #include "DmxController.h"
 #include <esp_task_wdt.h>  // Watchdog
-#include "secrets.h"  // Include LoRaWAN credentials
+#include "secrets.h"  // Include secrets file for LoRaWAN credentials
 
 // Debug output
 #define SERIAL_BAUD 115200
@@ -1514,7 +1514,7 @@ void setup() {
       Serial.println("LoRaWAN initialized successfully!");
       
       // Set the credentials
-      lora->setCredentials(LORAWAN_JOIN_EUI, LORAWAN_DEV_EUI, LORAWAN_APP_KEY, LORAWAN_NWK_KEY);
+      lora->setCredentialsHex(joinEUI, devEUI, appKeyHex, nwkKeyHex);
       
       // Join the network
       Serial.println("Attempting to join the LoRaWAN network...");
