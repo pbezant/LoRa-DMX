@@ -10,6 +10,9 @@ A library for managing LoRaWAN communication using RadioLib for ESP32 boards.
 * Support for both confirmed and unconfirmed data transmission
 * Error handling with automatic retry mechanism
 * Support for hex string credentials instead of byte arrays
+* **Support for LoRaWAN device classes A, B, and C**
+* **Class B functionality with beacon synchronization and ping slots**
+* **Class C functionality with continuous reception**
 
 ## Dependencies
 
@@ -43,7 +46,7 @@ This library is primarily designed for ESP32 boards with SX1262 LoRa modules, su
 
 ## Usage
 
-### Basic Example
+### Basic Example (Class A)
 
 ```cpp
 #include <Arduino.h>
@@ -107,14 +110,15 @@ void loop() {
     Serial.println("Failed to send data!");
   }
   
+  // Handle LoRaWAN events (required for Class B and C)
+  lora.handleEvents();
+  
   // Wait for 5 minutes before sending again
   delay(300000);
 }
 ```
 
-### Using Hex String Keys
-
-You can also use hex strings for the AppKey and NwkKey instead of byte arrays:
+### Class B Example
 
 ```cpp
 #include <Arduino.h>
@@ -129,19 +133,39 @@ You can also use hex strings for the AppKey and NwkKey instead of byte arrays:
 // LoRaWAN credentials
 uint64_t joinEUI = 0x0000000000000000;
 uint64_t devEUI = 0x0000000000000000;
-
-// Keys as hex strings (32 characters without spaces)
-String appKeyHex = "F30A2F42EAEA8DE5D796A22DBBC86908";
-String nwkKeyHex = "F30A2F42EAEA8DE5D796A22DBBC86908";
+uint8_t appKey[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+uint8_t nwkKey[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 // Create LoRaManager instance
 LoRaManager lora;
+
+// Callback for downlink data
+void handleDownlink(uint8_t* payload, size_t size, uint8_t port) {
+  Serial.print("Received downlink on port ");
+  Serial.print(port);
+  Serial.print(": ");
+  for (size_t i = 0; i < size; i++) {
+    Serial.print(payload[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+}
+
+// Callback for beacon reception
+void handleBeacon(uint8_t* payload, size_t size, float rssi, float snr) {
+  Serial.println("Beacon received!");
+  Serial.print("RSSI: ");
+  Serial.print(rssi);
+  Serial.print(" dBm, SNR: ");
+  Serial.print(snr);
+  Serial.println(" dB");
+}
 
 void setup() {
   Serial.begin(115200);
   delay(3000);
   
-  Serial.println("Starting LoRaWAN communication...");
+  Serial.println("Starting LoRaWAN communication (Class B)...");
   
   // Initialize the LoRa module
   if (!lora.begin(LORA_CS, LORA_DIO1, LORA_RST, LORA_BUSY)) {
@@ -149,26 +173,147 @@ void setup() {
     while (1);
   }
   
-  // Set LoRaWAN credentials using hex strings
-  if (lora.setCredentialsHex(joinEUI, devEUI, appKeyHex, nwkKeyHex)) {
-    Serial.println("Credentials set successfully!");
-  } else {
-    Serial.println("Failed to set credentials! Check your hex strings.");
-    while (1);
-  }
+  // Set LoRaWAN credentials
+  lora.setCredentials(joinEUI, devEUI, appKey, nwkKey);
+  
+  // Set downlink and beacon callbacks
+  lora.setDownlinkCallback(handleDownlink);
+  lora.setBeaconCallback(handleBeacon);
   
   // Join the network
   Serial.println("Joining LoRaWAN network...");
   if (lora.joinNetwork()) {
     Serial.println("Successfully joined the network!");
+    
+    // Switch to Class B mode
+    if (lora.setDeviceClass(DEVICE_CLASS_B)) {
+      Serial.println("Switched to Class B mode, starting beacon acquisition...");
+      
+      // Set ping slot periodicity (0-7, where 0 is most frequent, 7 is least frequent)
+      lora.setPingSlotPeriodicity(0);
+    } else {
+      Serial.println("Failed to switch to Class B mode!");
+    }
   } else {
     Serial.println("Failed to join the network!");
-    // The library will automatically retry when sending data
   }
 }
 
 void loop() {
-  // Same as the basic example
+  // Handle LoRaWAN events (required for Class B)
+  lora.handleEvents();
+  
+  // Check beacon state
+  if (lora.getBeaconState() == BEACON_STATE_LOCKED) {
+    // Beacons are being received, device is in Class B mode
+    // You can send data as usual
+    static unsigned long lastSendTime = 0;
+    if (millis() - lastSendTime > 300000) { // Send every 5 minutes
+      uint8_t data[] = {0x01, 0x02, 0x03, 0x04};
+      lora.sendData(data, sizeof(data), 1, false);
+      lastSendTime = millis();
+    }
+  }
+  
+  delay(100); // Short delay to prevent CPU hogging
+}
+```
+
+### Class C Example
+
+```cpp
+#include <Arduino.h>
+#include <LoRaManager.h>
+
+// Define LoRa pins for your board
+#define LORA_CS   18
+#define LORA_DIO1 23
+#define LORA_RST  14
+#define LORA_BUSY 33
+
+// LoRaWAN credentials
+uint64_t joinEUI = 0x0000000000000000;
+uint64_t devEUI = 0x0000000000000000;
+uint8_t appKey[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+uint8_t nwkKey[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+// Create LoRaManager instance
+LoRaManager lora;
+
+// Callback for downlink data
+void handleDownlink(uint8_t* payload, size_t size, uint8_t port) {
+  Serial.print("Received downlink on port ");
+  Serial.print(port);
+  Serial.print(": ");
+  for (size_t i = 0; i < size; i++) {
+    Serial.print(payload[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+  
+  // Process downlink commands immediately (Class C advantage)
+  if (port == 2 && size > 0) {
+    // Example: processing a command
+    switch (payload[0]) {
+      case 0x01:
+        Serial.println("Received command: Turn on LED");
+        // Turn on LED code here
+        break;
+      case 0x02:
+        Serial.println("Received command: Turn off LED");
+        // Turn off LED code here
+        break;
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(3000);
+  
+  Serial.println("Starting LoRaWAN communication (Class C)...");
+  
+  // Initialize the LoRa module
+  if (!lora.begin(LORA_CS, LORA_DIO1, LORA_RST, LORA_BUSY)) {
+    Serial.println("Failed to initialize LoRa!");
+    while (1);
+  }
+  
+  // Set LoRaWAN credentials
+  lora.setCredentials(joinEUI, devEUI, appKey, nwkKey);
+  
+  // Set downlink callback
+  lora.setDownlinkCallback(handleDownlink);
+  
+  // Join the network
+  Serial.println("Joining LoRaWAN network...");
+  if (lora.joinNetwork()) {
+    Serial.println("Successfully joined the network!");
+    
+    // Switch to Class C mode for continuous reception
+    if (lora.setDeviceClass(DEVICE_CLASS_C)) {
+      Serial.println("Switched to Class C mode, continuous reception active");
+    } else {
+      Serial.println("Failed to switch to Class C mode!");
+    }
+  } else {
+    Serial.println("Failed to join the network!");
+  }
+}
+
+void loop() {
+  // Handle LoRaWAN events (required for Class C)
+  lora.handleEvents();
+  
+  // Send telemetry data periodically
+  static unsigned long lastSendTime = 0;
+  if (millis() - lastSendTime > 300000) { // Send every 5 minutes
+    uint8_t data[] = {0x01, 0x02, 0x03, 0x04};
+    lora.sendData(data, sizeof(data), 1, false);
+    lastSendTime = millis();
+  }
+  
+  delay(100); // Short delay to prevent CPU hogging
 }
 ```
 
@@ -191,8 +336,19 @@ LoRaManager();
 - `float getLastRssi()` - Get the last RSSI value
 - `float getLastSnr()` - Get the last SNR value
 - `bool isNetworkJoined()` - Check if the device is joined to the network
-- `void handleEvents()` - Handle events (optional, can be called in the loop)
+- `void handleEvents()` - Handle events (required for Class B and C)
 - `int getLastErrorCode()` - Get the last error from LoRaWAN operations
+
+#### Class B and C Methods
+- `bool setDeviceClass(char deviceClass)` - Set the device class (DEVICE_CLASS_A, DEVICE_CLASS_B, or DEVICE_CLASS_C)
+- `char getDeviceClass()` - Get the current device class
+- `bool startBeaconAcquisition()` - Start beacon acquisition (Class B)
+- `void stopBeaconAcquisition()` - Stop beacon acquisition (Class B)
+- `bool setPingSlotPeriodicity(uint8_t periodicity)` - Set the ping slot periodicity (Class B, 0-7)
+- `uint8_t getPingSlotPeriodicity()` - Get the current ping slot periodicity (Class B)
+- `uint8_t getBeaconState()` - Get the current beacon state (Class B)
+- `void setBeaconCallback(BeaconCallback callback)` - Set the callback function for beacon reception (Class B)
+- `void setDownlinkCallback(DownlinkCallback callback)` - Set the callback function for downlink data
 
 ## License
 

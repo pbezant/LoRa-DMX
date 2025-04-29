@@ -1,8 +1,8 @@
 {
   "name": "LoRaManager",
-  "version": "1.1.0",
-  "description": "A library for managing LoRaWAN communication using RadioLib with support for hex string credentials",
-  "keywords": "lora, lorawan, radiolib, communication, hex string",
+  "version": "2.0.0",
+  "description": "A library for managing LoRaWAN communication using RadioLib with support for Class A, B, and C device operations",
+  "keywords": "lora, lorawan, radiolib, communication, hex string, class b, class c, beacon, ping slot, continuous reception",
   "repository": {
     "type": "git",
     "url": "https://github.com/yourusername/LoRaManager.git"

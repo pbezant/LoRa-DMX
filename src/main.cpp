@@ -6,6 +6,7 @@
  * 
  * Created for US915 frequency plan (United States)
  * Uses OTAA activation for TTN
+ * Operates in LoRaWAN Class C mode for continuous reception
  * 
  * Supported JSON Commands:
  * 
@@ -138,6 +139,8 @@ bool rainbowStaggered = true;     // Whether to stagger colors across fixtures
 // Add timing variables for various operations
 unsigned long lastHeartbeat = 0;  // Timestamp for heartbeat messages
 unsigned long lastStatusUpdate = 0; // Timestamp for status updates
+unsigned long lastClassCCheck = 0;  // Timestamp for Class C mode check
+unsigned long lastJoinAttempt = 0;  // Timestamp for last join attempt
 
 // Always process in callback for maximum reliability
 bool processInCallback = true; // Set to true to process commands immediately in callback
@@ -145,730 +148,89 @@ bool processInCallback = true; // Set to true to process commands immediately in
 // Set watchdog timeout to 30 seconds
 #define WDT_TIMEOUT 30
 
-// Add DMX diagnostic function
-void printDmxValues(int startAddr, int numChannels) {
-  if (!dmxInitialized || dmx == NULL) {
-    Serial.println("DMX not initialized, cannot print values");
+// Class C specific variables
+bool inClassCMode = false;    // Tracks if we are currently in Class C mode
+unsigned long downlinkCounter = 0;  // Counts successful downlinks
+unsigned long lastDownlinkTime = 0; // Timestamp of last downlink
+
+// Function to check if device should be in Class C mode
+bool shouldEnableClassC() {
+  // We want Class C if we're successfully joined to the network
+  if (loraInitialized && lora != NULL) {
+    return lora->isNetworkJoined();
+  }
+  return false;
+}
+
+// Function to check and set Class C mode
+void checkAndSetClassCMode() {
+  if (!loraInitialized || lora == NULL) {
     return;
   }
   
-  Serial.print("DMX values from address ");
-  Serial.print(startAddr);
-  Serial.print(" to ");
-  Serial.print(startAddr + numChannels - 1);
-  Serial.println(":");
-  
-  for (int i = 0; i < numChannels; i++) {
-    Serial.print("CH ");
-    Serial.print(startAddr + i);
-    Serial.print(": ");
-    Serial.print(dmx->getDmxData()[startAddr + i]);
-    Serial.print("  ");
-    if ((i + 1) % 8 == 0) Serial.println();
+  // If we're joined to the network but not in Class C mode
+  if (lora->isNetworkJoined() && !inClassCMode) {
+    Serial.println("Network joined - Switching to Class C mode for continuous reception...");
+    
+    // In RadioLib 7.x, setting the device class involves calling a method
+    // and may also require sending an uplink to inform the network
+    if (lora->setDeviceClass(DEVICE_CLASS_C)) {
+      Serial.println("Successfully switched to Class C mode!");
+      inClassCMode = true;
+      
+      // Blink the LED three times to indicate Class C mode enabled
+      DmxController::blinkLED(LED_PIN, 3, 200);
+      
+      // Send a status uplink to notify we're in Class C mode
+      // Use the updated sendString/sendData API with downlink handling
+      String message = "{\"status\":\"class_c_active\"}";
+      if (lora->sendString(message, 1, true)) {
+        Serial.println("Class C notification sent successfully");
+      } else {
+        Serial.println("Failed to send Class C notification, but continuing in Class C mode");
+      }
+    } else {
+      Serial.println("Failed to switch to Class C mode, will retry later");
+    }
   }
-  Serial.println();
+  // Check if we've fallen out of Class C mode (or disconnected)
+  else if (inClassCMode && (!lora->isNetworkJoined() || lora->getDeviceClass() != DEVICE_CLASS_C)) {
+    Serial.println("No longer in Class C mode - will attempt to restore");
+    inClassCMode = false;
+  }
 }
 
-// Improved JSON light processing
-bool processLightsJson(JsonArray lightsArray) {
-  if (!dmxInitialized || dmx == NULL) {
-    Serial.println("DMX not initialized, cannot process lights array");
-    return false;
+// Function to display Class C status
+void printClassCStatus() {
+  if (!loraInitialized || lora == NULL) {
+    Serial.println("LoRa not initialized - Class C status unavailable");
+    return;
   }
   
-  Serial.println("\n===== PROCESSING DOWNLINK LIGHTS COMMAND =====");
-  Serial.println("Starting DMX values:");
-  // Print current values for first 20 channels
-  printDmxValues(1, 20);
+  Serial.println("\n--- Class C Status ---");
+  Serial.print("Network joined: ");
+  Serial.println(lora->isNetworkJoined() ? "Yes" : "No");
+  Serial.print("Current device class: ");
+  Serial.println(lora->getDeviceClass());
+  Serial.print("Class C mode active: ");
+  Serial.println(inClassCMode ? "Yes" : "No");
+  Serial.print("Downlinks received: ");
+  Serial.println(downlinkCounter);
   
-  bool atLeastOneValid = false;
-  
-  // Iterate through each light in the array
-  for (JsonObject light : lightsArray) {
-    // Check if the light has an address field
-    if (!light.containsKey("address")) {
-      Serial.println("Light missing 'address' field, skipping");
-      continue;
-    }
-    
-    // Get the DMX address
-    int address = light["address"].as<int>();
-    
-    // Check if address is valid
-    if (address < 1 || address > 512) {
-      Serial.print("Invalid DMX address: ");
-      Serial.println(address);
-      continue;
-    }
-    
-    // Check if the light has a channels array
-    if (!light.containsKey("channels")) {
-      Serial.println("Light missing 'channels' array, skipping");
-      continue;
-    }
-    
-    // Get the channels array
-    JsonArray channelsArray = light["channels"];
-    
-    // Check if it's not empty
-    if (channelsArray.size() == 0) {
-      Serial.println("Empty channels array, skipping");
-      continue;
-    }
-    
-    Serial.print("Setting light at address ");
-    Serial.print(address);
-    Serial.print(" with ");
-    Serial.print(channelsArray.size());
-    Serial.println(" channels:");
-    
-    // Set the channels
-    int channelIndex = 0;
-    for (JsonVariant channelValue : channelsArray) {
-      int value = channelValue.as<int>();
-      
-      // Validate channel value (0-255)
-      value = max(0, min(value, 255));
-      
-      // DMX channels are 1-based
-      int dmxChannel = address + channelIndex;
-      
-      // Log the channel being set
-      Serial.print("  Channel ");
-      Serial.print(dmxChannel);
-      Serial.print(" = ");
-      Serial.println(value);
-      
-      // Don't exceed DMX_PACKET_SIZE
-      if (dmxChannel < DMX_PACKET_SIZE) {
-        dmx->getDmxData()[dmxChannel] = value;
-        channelIndex++;
-      } else {
-        Serial.print("DMX channel out of range: ");
-        Serial.println(dmxChannel);
-        break;
-      }
-    }
-    
-    // At least one light was processed successfully
-    atLeastOneValid = true;
-    
-    // Print debug info
-    Serial.print("Set DMX address ");
-    Serial.print(address);
-    Serial.print(" to values: [");
-    for (int i = 0; i < channelsArray.size(); i++) {
-      if (i > 0) Serial.print(", ");
-      Serial.print(dmx->getDmxData()[address + i]);
-    }
-    Serial.println("]");
+  if (downlinkCounter > 0) {
+    Serial.print("Time since last downlink: ");
+    Serial.print((millis() - lastDownlinkTime) / 1000);
+    Serial.println(" seconds");
   }
   
-  // Send data if at least one light was valid
-  if (atLeastOneValid) {
-    Serial.println("Sending updated DMX values to fixtures...");
-    
-    // Print final values for verification
-    Serial.println("Final DMX values being sent:");
-    printDmxValues(1, 20);
-    
-    dmx->sendData();
-    
-    // Save settings to persistent storage
-    dmx->saveSettings();
-    Serial.println("DMX settings saved to persistent storage");
-    
-    return true;
-  }
+  Serial.print("RSSI of last reception: ");
+  Serial.print(lora->getLastRssi());
+  Serial.println(" dBm");
   
-  return false;
-}
-
-// Add pattern handler class before the main setup() function
-class DmxPattern {
-public:
-  enum PatternType {
-    NONE,
-    COLOR_FADE,
-    RAINBOW,
-    STROBE,
-    CHASE,
-    ALTERNATE
-  };
-
-  DmxPattern() : active(false), patternType(NONE), speed(50), step(0), lastUpdate(0), cycleCount(0), maxCycles(5) {}
-
-  void start(PatternType type, int patternSpeed, int cycles = 5) {
-    active = true;
-    patternType = type;
-    speed = patternSpeed;
-    step = 0;
-    cycleCount = 0;
-    maxCycles = cycles;
-    lastUpdate = millis();
-    
-    Serial.print("Pattern started: ");
-    switch (patternType) {
-      case COLOR_FADE: Serial.println("COLOR_FADE"); break;
-      case RAINBOW: Serial.println("RAINBOW"); break;
-      case STROBE: Serial.println("STROBE"); break;
-      case CHASE: Serial.println("CHASE"); break;
-      case ALTERNATE: Serial.println("ALTERNATE"); break;
-      default: Serial.println("UNKNOWN");
-    }
-  }
-
-  void stop() {
-    active = false;
-    patternType = NONE;
-    Serial.println("Pattern stopped");
-  }
-  
-  bool isActive() {
-    return active;
-  }
-  
-  void update() {
-    if (!active || !dmxInitialized || dmx == NULL) {
-      return;
-    }
-    
-    unsigned long now = millis();
-    if (now - lastUpdate < speed) {
-      return;
-    }
-    
-    lastUpdate = now;
-    
-    switch (patternType) {
-      case COLOR_FADE:
-        updateColorFade();
-        break;
-      case RAINBOW:
-        updateRainbow();
-        break;
-      case STROBE:
-        updateStrobe();
-        break;
-      case CHASE:
-        updateChase();
-        break;
-      case ALTERNATE:
-        updateAlternate();
-        break;
-      default:
-        break;
-    }
-    
-    // Send the DMX data
-    dmx->sendData();
-  }
-
-private:
-  bool active;
-  PatternType patternType;
-  int speed;  // Time in ms between updates
-  int step;   // Current step in the pattern
-  unsigned long lastUpdate;
-  int cycleCount;
-  int maxCycles;
-  
-  // HSV to RGB conversion for color effects
-  void hsvToRgb(float h, float s, float v, uint8_t& r, uint8_t& g, uint8_t& b) {
-    float c = v * s;
-    float x = c * (1 - abs(fmod(h / 60.0, 2) - 1));
-    float m = v - c;
-    
-    float r1, g1, b1;
-    if (h < 60) {
-      r1 = c; g1 = x; b1 = 0;
-    } else if (h < 120) {
-      r1 = x; g1 = c; b1 = 0;
-    } else if (h < 180) {
-      r1 = 0; g1 = c; b1 = x;
-    } else if (h < 240) {
-      r1 = 0; g1 = x; b1 = c;
-    } else if (h < 300) {
-      r1 = x; g1 = 0; b1 = c;
-    } else {
-      r1 = c; g1 = 0; b1 = x;
-    }
-    
-    r = (r1 + m) * 255;
-    g = (g1 + m) * 255;
-    b = (b1 + m) * 255;
-  }
-  
-  // Color fade pattern (gradually cycles through colors)
-  void updateColorFade() {
-    float hue = (step % 360);
-    step = (step + 2) % 360;
-    
-    uint8_t r, g, b;
-    hsvToRgb(hue, 1.0, 1.0, r, g, b);
-    
-    // Set all fixtures to the same color
-    int numFixtures = dmx->getNumFixtures();
-    for (int i = 0; i < numFixtures; i++) {
-      dmx->setFixtureColor(i, r, g, b, 0);
-    }
-    
-    // Check if we've completed a cycle
-    if (step == 0) {
-      cycleCount++;
-      if (cycleCount >= maxCycles && maxCycles > 0) {
-        stop();
-      }
-    }
-  }
-  
-  // Rainbow pattern (different color on each fixture)
-  void updateRainbow() {
-    int numFixtures = dmx->getNumFixtures();
-    if (numFixtures == 0) return;
-    
-    // Calculate hue offset for this step
-    int baseHue = step % 360;
-    step = (step + 5) % 360;
-    
-    // Distribute colors across fixtures
-    for (int i = 0; i < numFixtures; i++) {
-      float hue = fmod(baseHue + (360.0 * i / numFixtures), 360);
-      
-      uint8_t r, g, b;
-      hsvToRgb(hue, 1.0, 1.0, r, g, b);
-      
-      dmx->setFixtureColor(i, r, g, b, 0);
-    }
-    
-    // Check if we've completed a cycle
-    if (step == 0) {
-      cycleCount++;
-      if (cycleCount >= maxCycles && maxCycles > 0) {
-        stop();
-      }
-    }
-  }
-  
-  // Strobe pattern (flash on and off)
-  void updateStrobe() {
-    bool isOn = (step % 2) == 0;
-    step++;
-    
-    int numFixtures = dmx->getNumFixtures();
-    for (int i = 0; i < numFixtures; i++) {
-      if (isOn) {
-        dmx->setFixtureColor(i, 255, 255, 255, 255);  // White when on
-      } else {
-        dmx->setFixtureColor(i, 0, 0, 0, 0);  // Off
-      }
-    }
-    
-    // Count each on-off cycle as one complete cycle
-    if (step % 2 == 0) {
-      cycleCount++;
-      if (cycleCount >= maxCycles && maxCycles > 0) {
-        stop();
-      }
-    }
-  }
-  
-  // Chase pattern (one light at a time)
-  void updateChase() {
-    int numFixtures = dmx->getNumFixtures();
-    if (numFixtures == 0) return;
-    
-    int activeFixture = step % numFixtures;
-    step = (step + 1) % numFixtures;
-    
-    // Turn all fixtures off first
-    for (int i = 0; i < numFixtures; i++) {
-      if (i == activeFixture) {
-        // This fixture gets the color - use a rotating hue
-        uint8_t r, g, b;
-        float hue = (cycleCount * 30) % 360;  // Change color every full chase cycle
-        hsvToRgb(hue, 1.0, 1.0, r, g, b);
-        
-        dmx->setFixtureColor(i, r, g, b, 0);
-      } else {
-        dmx->setFixtureColor(i, 0, 0, 0, 0);
-      }
-    }
-    
-    // Count a full chase sequence as one complete cycle
-    if (step == 0) {
-      cycleCount++;
-      if (cycleCount >= maxCycles && maxCycles > 0) {
-        stop();
-      }
-    }
-  }
-  
-  // Alternating pattern (every other fixture)
-  void updateAlternate() {
-    int numFixtures = dmx->getNumFixtures();
-    bool flipState = (step % 2) == 0;
-    step++;
-    
-    for (int i = 0; i < numFixtures; i++) {
-      bool isOn = (i % 2 == 0) ? flipState : !flipState;
-      
-      if (isOn) {
-        uint8_t r, g, b;
-        float hue = (cycleCount * 40) % 360;  // Change color every flip
-        hsvToRgb(hue, 1.0, 1.0, r, g, b);
-        
-        dmx->setFixtureColor(i, r, g, b, 0);
-      } else {
-        dmx->setFixtureColor(i, 0, 0, 0, 0);
-      }
-    }
-    
-    // Count each on-off alternation as one complete cycle
-    if (step % 2 == 0) {
-      cycleCount++;
-      if (cycleCount >= maxCycles && maxCycles > 0) {
-        stop();
-      }
-    }
-  }
-};
-
-// Create a global pattern handler
-DmxPattern patternHandler;
-
-/**
- * Process JSON payload and control DMX fixtures
- * 
- * Expected JSON format:
- * {
- *   "lights": [
- *     {
- *       "address": 1,
- *       "channels": [255, 0, 128, 0]
- *     },
- *     {
- *       "address": 5,
- *       "channels": [255, 255, 100, 0]
- *     }
- *   ]
- * }
- * 
- * Or for test patterns:
- * {
- *   "test": {
- *     "pattern": "rainbow",
- *     "cycles": 3,
- *     "speed": 50,
- *     "staggered": true
- *   }
- * }
- * 
- * Or:
- * {
- *   "test": {
- *     "pattern": "strobe",
- *     "color": 1,
- *     "count": 20,
- *     "onTime": 50,
- *     "offTime": 50,
- *     "alternate": false
- *   }
- * }
- * 
- * @param jsonString The JSON string to process
- * @return true if processing was successful, false otherwise
- */
-bool processJsonPayload(const String& jsonString) {
-  StaticJsonDocument<MAX_JSON_SIZE> doc;
-  DeserializationError error = deserializeJson(doc, jsonString);
-
-  if (error) {
-    Serial.print("JSON parsing error: ");
-    Serial.println(error.c_str());
-    return false;
-  }
-
-  Serial.print("Processing JSON payload: ");
-  Serial.println(jsonString);
-
-  // First, check for pattern commands
-  if (doc.containsKey("pattern")) {
-    // Handle both object and string pattern formats
-    if (doc["pattern"].is<JsonObject>()) {
-      // Object format - {"pattern": {"type": "rainbow", "speed": 50}}
-      JsonObject pattern = doc["pattern"];
-      if (pattern.containsKey("type")) {
-        String type = pattern["type"];
-        int speed = pattern["speed"] | 50;  // Default 50ms
-        int cycles = pattern["cycles"] | 5;  // Default 5 cycles
-        
-        DmxPattern::PatternType patternType = DmxPattern::NONE;
-        
-        if (type == "colorFade") {
-          patternType = DmxPattern::COLOR_FADE;
-        } else if (type == "rainbow") {
-          patternType = DmxPattern::RAINBOW;
-        } else if (type == "strobe") {
-          patternType = DmxPattern::STROBE;
-          speed = pattern["speed"] | 100;  // Slower default for strobe
-        } else if (type == "chase") {
-          patternType = DmxPattern::CHASE;
-        } else if (type == "alternate") {
-          patternType = DmxPattern::ALTERNATE;
-        } else if (type == "stop") {
-          patternHandler.stop();
-          return true;
-        }
-        
-        if (patternType != DmxPattern::NONE) {
-          patternHandler.start(patternType, speed, cycles);
-          return true;
-        }
-      }
-    } else if (doc["pattern"].is<String>()) {
-      // String format - {"pattern": "rainbow"}
-      String patternType = doc["pattern"].as<String>();
-      Serial.print("Simple pattern format detected: ");
-      Serial.println(patternType);
-      
-      // Default values for each pattern
-      int speed = 50;
-      int cycles = 5;
-      DmxPattern::PatternType type = DmxPattern::NONE;
-      
-      if (patternType == "colorFade") {
-        type = DmxPattern::COLOR_FADE;
-      } else if (patternType == "rainbow") {
-        type = DmxPattern::RAINBOW;
-        cycles = 3;
-      } else if (patternType == "strobe") {
-        type = DmxPattern::STROBE;
-        speed = 100;
-        cycles = 10;
-      } else if (patternType == "chase") {
-        type = DmxPattern::CHASE;
-        speed = 200;
-        cycles = 3;
-      } else if (patternType == "alternate") {
-        type = DmxPattern::ALTERNATE;
-        speed = 300;
-        cycles = 5;
-      } else if (patternType == "stop") {
-        patternHandler.stop();
-        return true;
-      }
-      
-      if (type != DmxPattern::NONE) {
-        Serial.println("Starting pattern...");
-        patternHandler.start(type, speed, cycles);
-        return true;
-      }
-    }
-  }
-
-  // Then check for test commands
-  if (doc.containsKey("test")) {
-    // Get the test object
-    JsonObject testObj = doc["test"];
-    
-    // Check if the test object has a pattern field
-    if (!testObj.containsKey("pattern")) {
-      Serial.println("JSON format error: 'pattern' field not found in test object");
-      return false;
-    }
-    
-    // Get the pattern type
-    String pattern = testObj["pattern"].as<String>();
-    pattern.toLowerCase(); // Convert to lowercase for case-insensitive comparison
-    
-    Serial.print("Processing test pattern: ");
-    Serial.println(pattern);
-    
-    // Process based on pattern type
-    if (pattern == "rainbow") {
-      // Get parameters with defaults if not specified
-      int cycles = testObj.containsKey("cycles") ? testObj["cycles"].as<int>() : 3;
-      int speed = testObj.containsKey("speed") ? testObj["speed"].as<int>() : 50;
-      bool staggered = testObj.containsKey("staggered") ? testObj["staggered"].as<bool>() : true;
-      
-      // Validate parameters
-      cycles = max(1, min(cycles, 10)); // Limit cycles between 1 and 10
-      speed = max(10, min(speed, 500)); // Limit speed between 10ms and 500ms
-      
-      Serial.println("Executing rainbow chase pattern via downlink command");
-      Serial.print("Cycles: ");
-      Serial.print(cycles);
-      Serial.print(", Speed: ");
-      Serial.print(speed);
-      Serial.print("ms, Staggered: ");
-      Serial.println(staggered ? "Yes" : "No");
-      
-      // Configure test fixtures if none exist
-      if (dmx->getNumFixtures() == 0) {
-        Serial.println("Setting up default test fixtures for rainbow pattern");
-        // Initialize 4 test fixtures with 4 channels each (RGBW)
-        dmx->initializeFixtures(4, 4);
-        
-        // Configure fixtures with sequential DMX addresses
-        dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
-        dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
-        dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
-        dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
-      }
-      
-      // Run the rainbow chase pattern
-      dmx->runRainbowChase(cycles, speed, staggered);
-      
-      // Save the final state after the pattern completes
-      dmx->saveSettings();
-      
-      return true;
-    } 
-    else if (pattern == "strobe") {
-      // Get parameters with defaults if not specified
-      int color = testObj.containsKey("color") ? testObj["color"].as<int>() : 0;
-      int count = testObj.containsKey("count") ? testObj["count"].as<int>() : 20;
-      int onTime = testObj.containsKey("onTime") ? testObj["onTime"].as<int>() : 50;
-      int offTime = testObj.containsKey("offTime") ? testObj["offTime"].as<int>() : 50;
-      bool alternate = testObj.containsKey("alternate") ? testObj["alternate"].as<bool>() : false;
-      
-      // Validate parameters
-      color = max(0, min(color, 3)); // Limit color between 0 and 3
-      count = max(1, min(count, 100)); // Limit count between 1 and 100
-      onTime = max(10, min(onTime, 1000)); // Limit onTime between 10ms and 1000ms
-      offTime = max(10, min(offTime, 1000)); // Limit offTime between 10ms and 1000ms
-      
-      Serial.println("Executing strobe test pattern via downlink command");
-      Serial.print("Color: ");
-      Serial.print(color);
-      Serial.print(", Count: ");
-      Serial.print(count);
-      Serial.print(", On Time: ");
-      Serial.print(onTime);
-      Serial.print("ms, Off Time: ");
-      Serial.print(offTime);
-      Serial.print(", Alternate: ");
-      Serial.println(alternate ? "Yes" : "No");
-      
-      // Configure test fixtures if none exist
-      if (dmx->getNumFixtures() == 0) {
-        Serial.println("Setting up default test fixtures for strobe pattern");
-        // Initialize 4 test fixtures with 4 channels each (RGBW)
-        dmx->initializeFixtures(4, 4);
-        
-        // Configure fixtures with sequential DMX addresses
-        dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
-        dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
-        dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
-        dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
-      }
-      
-      // Run the strobe test pattern
-      dmx->runStrobeTest(color, count, onTime, offTime, alternate);
-      
-      // Save the final state after the pattern completes
-      dmx->saveSettings();
-      
-      return true;
-    }
-    else if (pattern == "continuous") {
-      // This pattern controls the continuous rainbow effect in the main loop
-      
-      // Get parameters with defaults if not specified
-      bool enabled = testObj.containsKey("enabled") ? testObj["enabled"].as<bool>() : false;
-      int speed = testObj.containsKey("speed") ? testObj["speed"].as<int>() : 30;
-      bool staggered = testObj.containsKey("staggered") ? testObj["staggered"].as<bool>() : true;
-      
-      // Validate parameters
-      speed = max(5, min(speed, 500)); // Limit speed between 5ms and 500ms
-      
-      // Set the continuous rainbow mode
-      runningRainbowDemo = enabled;
-      rainbowStepDelay = speed;
-      rainbowStaggered = staggered;
-      
-      Serial.print("Continuous rainbow mode: ");
-      Serial.print(enabled ? "ENABLED" : "DISABLED");
-      Serial.print(", Speed: ");
-      Serial.print(speed);
-      Serial.print("ms, Staggered: ");
-      Serial.println(staggered ? "Yes" : "No");
-      
-      // Configure test fixtures if none exist
-      if (dmx->getNumFixtures() == 0) {
-        Serial.println("Setting up default test fixtures for continuous rainbow");
-        // Initialize 4 test fixtures with 4 channels each (RGBW)
-        dmx->initializeFixtures(4, 4);
-        
-        // Configure fixtures with sequential DMX addresses
-        dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
-        dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
-        dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
-        dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
-      }
-      
-      if (enabled) {
-        // Note: We don't save settings here as they'll continuously change
-        // They'll be saved when the mode is disabled
-      } else {
-        runningRainbowDemo = false;
-        Serial.println("Continuous rainbow mode disabled");
-        
-        // Save the final state when the continuous mode is disabled
-        dmx->saveSettings();
-      }
-      
-      return true;
-    }
-    else if (pattern == "ping") {
-      // Simple ping command for testing downlink connectivity
-      Serial.println("=== PING RECEIVED ===");
-      Serial.println("Downlink communication is working!");
-      
-      // Blink the LED in a distinctive pattern to indicate ping received
-      for (int i = 0; i < 3; i++) {
-        DmxController::blinkLED(LED_PIN, 3, 100);
-        delay(500);
-      }
-      
-      // Send a ping response uplink
-      if (loraInitialized && lora != NULL) {
-        String response = "{\"ping_response\":\"ok\"}";
-        if (lora->sendString(response, 1, true)) {
-          Serial.println("Ping response sent (confirmed)");
-        }
-      }
-      
-      return true;
-    }
-    else {
-      Serial.print("Unknown test pattern: ");
-      Serial.println(pattern);
-      return false;
-    }
-  }
-  // Finally check for direct light control
-  if (doc.containsKey("lights")) {
-    // Get the lights array
-    JsonArray lightsArray = doc["lights"];
-    
-    // Process the lights array
-    bool success = processLightsJson(lightsArray);
-    
-    // If processing was successful, send the data
-    if (success) {
-      // Save settings to persistent storage (already called in processLightsJson)
-      return true;
-    } else {
-      Serial.println("Failed to process lights array");
-      return false;
-    }
-  }
-
-  // If we got here, no valid command objects were found
-  Serial.println("JSON format error: missing 'lights', 'pattern', or 'test' object");
-  return false;
+  Serial.print("SNR of last reception: ");
+  Serial.print(lora->getLastSnr());
+  Serial.println(" dB");
+  Serial.println("---------------------");
 }
 
 // Add this helper function at the end of the file, before the loop() function
@@ -909,6 +271,10 @@ void debugBytes(const char* label, uint8_t* data, size_t size) {
  */
 void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
   Serial.println("\n\n==== DEBUG: ENTERING DOWNLINK CALLBACK ====");
+  
+  // Update downlink statistics
+  downlinkCounter++;
+  lastDownlinkTime = millis();
   
   // Print a detailed raw byte dump of the received payload
   debugBytes("RAW DOWNLINK PAYLOAD", payload, size);
@@ -1348,8 +714,231 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
         Serial.println("Processing downlink command immediately");
         
         try {
-          // Process the JSON payload
-          bool success = processJsonPayload(payloadStr);
+          // Process the JSON payload directly here instead of calling a separate function
+          Serial.println("Processing JSON payload: " + payloadStr);
+          
+          // Create a JSON document to hold the parsed data
+          StaticJsonDocument<MAX_JSON_SIZE> doc;
+          DeserializationError error = deserializeJson(doc, payloadStr);
+          
+          bool success = false;
+          
+          if (!error) {
+            // Flag to track if any command was successfully processed
+            bool commandProcessed = false;
+            
+            // Check if this is a test pattern command
+            if (doc.containsKey("test")) {
+              // Process test pattern command
+              String pattern = doc["test"]["pattern"].as<String>();
+              Serial.print("Test pattern requested: ");
+              Serial.println(pattern);
+              
+              // Make sure DMX is initialized
+              if (!dmxInitialized || dmx == NULL) {
+                Serial.println("DMX not initialized, cannot process test pattern");
+              } else {
+                // Process different test patterns
+                if (pattern == "ping") {
+                  // Ping test - just return success
+                  Serial.println("Ping test received");
+                  commandProcessed = true;
+                }
+                else if (pattern == "rainbow") {
+                  // Rainbow chase pattern
+                  int cycles = doc["test"]["cycles"] | 3;  // Default: 3 cycles
+                  int speed = doc["test"]["speed"] | 50;   // Default: 50ms
+                  bool staggered = doc["test"]["staggered"] | true; // Default: true
+                  
+                  Serial.print("Running rainbow chase for ");
+                  Serial.print(cycles);
+                  Serial.print(" cycles at ");
+                  Serial.print(speed);
+                  Serial.print("ms speed, staggered: ");
+                  Serial.println(staggered ? "yes" : "no");
+                  
+                  // Make sure cycles and speed are within reasonable range
+                  cycles = constrain(cycles, 1, 10);
+                  speed = constrain(speed, 10, 500);
+                  
+                  // Take mutex for DMX access
+                  if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+                    // Run the rainbow chase pattern
+                    dmx->runRainbowChase(cycles, speed, staggered);
+                    
+                    // Give mutex back
+                    xSemaphoreGive(dmxMutex);
+                    commandProcessed = true;
+                  }
+                }
+                else if (pattern == "strobe") {
+                  // Strobe pattern
+                  int color = doc["test"]["color"] | 0;    // Default: white (0)
+                  int count = doc["test"]["count"] | 20;   // Default: 20 flashes
+                  int onTime = doc["test"]["onTime"] | 50; // Default: 50ms on
+                  int offTime = doc["test"]["offTime"] | 50; // Default: 50ms off
+                  bool alternate = doc["test"]["alternate"] | false; // Default: false
+                  
+                  Serial.print("Running strobe with color ");
+                  Serial.print(color);
+                  Serial.print(" for ");
+                  Serial.print(count);
+                  Serial.print(" flashes, timing: ");
+                  Serial.print(onTime);
+                  Serial.print("ms on, ");
+                  Serial.print(offTime);
+                  Serial.print("ms off, alternate: ");
+                  Serial.println(alternate ? "yes" : "no");
+                  
+                  // Apply constraints
+                  color = constrain(color, 0, 3);
+                  count = constrain(count, 1, 100);
+                  onTime = constrain(onTime, 10, 1000);
+                  offTime = constrain(offTime, 10, 1000);
+                  
+                  // Take mutex for DMX access
+                  if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+                    // Run the strobe pattern
+                    dmx->runStrobeTest(color, count, onTime, offTime, alternate);
+                    
+                    // Give mutex back
+                    xSemaphoreGive(dmxMutex);
+                    commandProcessed = true;
+                  }
+                }
+                else if (pattern == "continuous") {
+                  // Continuous rainbow effect
+                  bool enabled = doc["test"]["enabled"] | true;   // Default: enable
+                  int speed = doc["test"]["speed"] | 30;          // Default: 30ms
+                  bool staggered = doc["test"]["staggered"] | true; // Default: true
+                  
+                  Serial.print("Setting continuous rainbow: ");
+                  Serial.print(enabled ? "ENABLED" : "DISABLED");
+                  Serial.print(", speed: ");
+                  Serial.print(speed);
+                  Serial.print("ms, staggered: ");
+                  Serial.println(staggered ? "yes" : "no");
+                  
+                  // Apply constraints
+                  speed = constrain(speed, 5, 500);
+                  
+                  // Update the global variables
+                  runningRainbowDemo = enabled;
+                  rainbowStepDelay = speed;
+                  rainbowStaggered = staggered;
+                  
+                  if (!enabled) {
+                    // If disabling, restore last saved settings
+                    if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+                      if (dmx->loadSettings()) {
+                        Serial.println("Restored saved DMX settings");
+                      } else {
+                        // If no settings, turn everything off
+                        for (int i = 0; i < dmx->getNumFixtures(); i++) {
+                          dmx->setFixtureColor(i, 0, 0, 0, 0);
+                        }
+                      }
+                      xSemaphoreGive(dmxMutex);
+                    }
+                  }
+                  
+                  commandProcessed = true;
+                }
+                else {
+                  Serial.print("Unknown test pattern: ");
+                  Serial.println(pattern);
+                }
+              }
+            }
+            // Check if this is a direct lights control command
+            else if (doc.containsKey("lights")) {
+              // Process direct lights control
+              Serial.println("Processing direct lights control command");
+              
+              if (!dmxInitialized || dmx == NULL) {
+                Serial.println("DMX not initialized, cannot process lights command");
+              } else {
+                JsonArray lights = doc["lights"];
+                bool lightsUpdated = false;
+                
+                // Take mutex for DMX access
+                if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+                  // Process each light in the array
+                  for (JsonObject light : lights) {
+                    if (light.containsKey("address") && light.containsKey("channels")) {
+                      int address = light["address"];
+                      JsonArray channels = light["channels"];
+                      
+                      Serial.print("Setting fixture at address ");
+                      Serial.print(address);
+                      Serial.print(" with values: ");
+                      
+                      // Convert fixture address (1-based) to fixture index (0-based)
+                      int fixtureIndex = address - 1;
+                      
+                      // Check if fixture address is valid
+                      if (fixtureIndex >= 0 && fixtureIndex < dmx->getNumFixtures()) {
+                        if (channels.size() >= 3) {
+                          // Get the RGB(W) values
+                          int r = channels[0];
+                          int g = channels[1];
+                          int b = channels[2];
+                          int w = (channels.size() >= 4) ? channels[3] : 0;
+                          
+                          Serial.print("R=");
+                          Serial.print(r);
+                          Serial.print(", G=");
+                          Serial.print(g);
+                          Serial.print(", B=");
+                          Serial.print(b);
+                          if (channels.size() >= 4) {
+                            Serial.print(", W=");
+                            Serial.print(w);
+                          }
+                          Serial.println();
+                          
+                          // Set the fixture color
+                          dmx->setFixtureColor(fixtureIndex, r, g, b, w);
+                          lightsUpdated = true;
+                        } else {
+                          Serial.println("ERROR: At least 3 channels (RGB) are required");
+                        }
+                      } else {
+                        Serial.print("ERROR: Invalid fixture address: ");
+                        Serial.println(address);
+                      }
+                    } else {
+                      Serial.println("ERROR: Light entry missing address or channels");
+                    }
+                  }
+                  
+                  // If we updated any lights, send the data and save settings
+                  if (lightsUpdated) {
+                    dmx->sendData();
+                    dmx->saveSettings();
+                    commandProcessed = true;
+                    
+                    // If continuous effect was running, stop it
+                    if (runningRainbowDemo) {
+                      Serial.println("Stopping continuous rainbow effect");
+                      runningRainbowDemo = false;
+                    }
+                  }
+                  
+                  // Give mutex back
+                  xSemaphoreGive(dmxMutex);
+                }
+              }
+            }
+            else {
+              Serial.println("Unknown command format - no recognized keys found");
+            }
+            
+            success = commandProcessed;
+          } else {
+            Serial.print("JSON parsing failed: ");
+            Serial.println(error.c_str());
+          }
           
           if (success) {
             Serial.println("Successfully processed downlink");
@@ -1420,7 +1009,44 @@ void handleDownlink(uint8_t* payload, size_t size, uint8_t port) {
   
   // Process the payload as JSON
   if (dmxInitialized) {
-    bool success = processJsonPayload(payloadStr);
+    // Inline the JSON processing similar to the handleDownlinkCallback function
+    Serial.println("Processing JSON payload: " + payloadStr);
+    
+    // Create a JSON document to hold the parsed data
+    StaticJsonDocument<MAX_JSON_SIZE> doc;
+    DeserializationError error = deserializeJson(doc, payloadStr);
+    
+    bool success = false;
+    
+    if (!error) {
+      // Flag to track if any command was successfully processed
+      bool commandProcessed = false;
+      
+      // Process JSON similar to above - simplified version for brevity
+      if (doc.containsKey("test") || doc.containsKey("lights")) {
+        // Take mutex for DMX access
+        if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+          // Basic implementation that forces a process via callback
+          // We'll delegate to the callback for the full implementation
+          if (processInCallback && handleDownlinkCallback) {
+            // Convert back to bytes for consistent processing
+            uint8_t tempBuffer[MAX_JSON_SIZE];
+            size_t tempSize = payloadStr.length();
+            memcpy(tempBuffer, payloadStr.c_str(), tempSize);
+            
+            // Call the callback directly
+            handleDownlinkCallback(tempBuffer, tempSize, port);
+            commandProcessed = true;
+          }
+          
+          // Give mutex back
+          xSemaphoreGive(dmxMutex);
+        }
+      }
+      
+      success = commandProcessed;
+    }
+    
     if (success) {
       // Blink LED to indicate successful processing
       DmxController::blinkLED(LED_PIN, 2, 200);
@@ -1476,7 +1102,7 @@ void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(500);
   Serial.println("\n\n=== DMX LoRa Controller Starting ===");
-  Serial.println("Version: 1.0.0");
+  Serial.println("Version: 1.0.0 (Class C Enabled)");
   
   // Configure the diagnostic LED as an output
   pinMode(LED_PIN, OUTPUT);
@@ -1520,6 +1146,18 @@ void setup() {
       Serial.println("Attempting to join the LoRaWAN network...");
       if (lora->joinNetwork()) {
         Serial.println("Successfully joined the network!");
+        
+        // Now switch to Class C mode for continuous reception
+        Serial.println("Switching to Class C mode for continuous reception...");
+        if (lora->setDeviceClass(DEVICE_CLASS_C)) {
+          Serial.println("Successfully switched to Class C mode!");
+          inClassCMode = true;
+          
+          // Blink LED to indicate Class C mode enabled
+          DmxController::blinkLED(LED_PIN, 3, 200);
+        } else {
+          Serial.println("Failed to switch to Class C mode, will retry in the main loop");
+        }
       } else {
         Serial.println("Failed to join network, will continue attempts in background");
       }
@@ -1605,7 +1243,8 @@ void setup() {
     Serial.println("Preparing to send first uplink...");
     delay(2000);  // 2 second delay before first uplink
     
-    String message = "{\"status\":\"online\",\"dmx\":" + String(dmxInitialized ? "true" : "false") + "}";
+    String message = "{\"status\":\"online\",\"dmx\":" + String(dmxInitialized ? "true" : "false") + 
+                     ",\"class\":\"" + String(inClassCMode ? "C" : "A") + "\"}";
     if (lora->sendString(message, 1, true)) { // Changed to confirmed uplink
       Serial.println("Status uplink sent successfully (confirmed)");
     } else {
@@ -1637,16 +1276,46 @@ void loop() {
   
   // Main app checks for lora events - this is the only LoRa task on Core 1
   if (loraInitialized && lora != NULL) {
-    lora->handleEvents();  // Process LoRaWAN events
+    // In RadioLib 7.x, handleEvents() has a different purpose
+    // It won't poll for incoming data, but it manages other internal state
+    lora->handleEvents();
+    
+    // For Class C, we need to periodically check and maintain the state
+    if (currentMillis - lastClassCCheck >= 30000) {
+      lastClassCCheck = currentMillis;
+      checkAndSetClassCMode();
+      
+      // If enough time has passed, print Class C status (every 5 minutes)
+      static unsigned long lastStatusPrint = 0;
+      if (currentMillis - lastStatusPrint >= 300000) {
+        lastStatusPrint = currentMillis;
+        printClassCStatus();
+      }
+    }
+  }
+  
+  // Try to rejoin if not connected - limited to once every 2 minutes
+  if (loraInitialized && lora != NULL && !lora->isNetworkJoined() && 
+      (currentMillis - lastJoinAttempt >= 120000)) {
+    lastJoinAttempt = currentMillis;
+    Serial.println("Not joined to network. Attempting to join...");
+    
+    if (lora->joinNetwork()) {
+      Serial.println("Successfully joined the network!");
+      // After joining, try to switch to Class C mode
+      checkAndSetClassCMode();
+    } else {
+      Serial.println("Join attempt failed. Will try again later.");
+    }
   }
   
   // Send a heartbeat ping every 60 seconds
   if (currentMillis - lastHeartbeat >= 60000) {
     lastHeartbeat = currentMillis;
     
-    if (loraInitialized && lora != NULL) {
+    if (loraInitialized && lora != NULL && lora->isNetworkJoined()) {
       Serial.println("Sending heartbeat ping...");
-      String message = "{\"hb\":1}";
+      String message = "{\"hb\":1,\"class\":\"" + String(inClassCMode ? "C" : "A") + "\"}";
       lora->sendString(message, 1, true);  // Send on port 1, confirmed
     }
   }
@@ -1665,11 +1334,6 @@ void loop() {
         xSemaphoreGive(dmxMutex);
       }
     }
-  }
-  
-  // Update pattern (if active)
-  if (patternHandler.isActive()) {
-    patternHandler.update();
   }
   
   // Yield to allow other tasks to run
