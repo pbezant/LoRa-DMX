@@ -221,36 +221,6 @@ int LoRaManager::configureSubbandChannels(uint8_t targetSubBand) {
   return RADIOLIB_ERR_NONE;
 }
 
-// Convert hex string to byte array
-bool LoRaManager::hexStringToByteArray(const String& hexString, uint8_t* result, size_t resultLen) {
-  // Check if the string length is valid (2 chars per byte)
-  if (hexString.length() != resultLen * 2) {
-    Serial.println(F("[LoRaManager] Invalid hex string length"));
-    return false;
-  }
-  
-  // Convert each pair of hex chars to a byte
-  for (size_t i = 0; i < resultLen; i++) {
-    // Get the two hex characters
-    String byteStr = hexString.substring(i * 2, i * 2 + 2);
-    
-    // Convert to integer
-    char* endPtr;
-    uint8_t byteVal = strtol(byteStr.c_str(), &endPtr, 16);
-    
-    // Check if conversion was successful
-    if (*endPtr != '\0') {
-      Serial.println(F("[LoRaManager] Invalid hex character in string"));
-      return false;
-    }
-    
-    // Store the byte value
-    result[i] = byteVal;
-  }
-  
-  return true;
-}
-
 // Set the LoRaWAN credentials
 void LoRaManager::setCredentials(uint64_t joinEUI, uint64_t devEUI, uint8_t* appKey, uint8_t* nwkKey) {
   this->joinEUI = joinEUI;
@@ -259,19 +229,6 @@ void LoRaManager::setCredentials(uint64_t joinEUI, uint64_t devEUI, uint8_t* app
   // Copy the keys
   memcpy(this->appKey, appKey, 16);
   memcpy(this->nwkKey, nwkKey, 16);
-}
-
-// Set the LoRaWAN credentials using hex strings for keys
-bool LoRaManager::setCredentialsHex(uint64_t joinEUI, uint64_t devEUI, const String& appKeyHex, const String& nwkKeyHex) {
-  this->joinEUI = joinEUI;
-  this->devEUI = devEUI;
-  
-  // Convert hex strings to byte arrays
-  bool appKeyResult = hexStringToByteArray(appKeyHex, this->appKey, 16);
-  bool nwkKeyResult = hexStringToByteArray(nwkKeyHex, this->nwkKey, 16);
-  
-  // Return true only if both conversions were successful
-  return appKeyResult && nwkKeyResult;
 }
 
 // Set the callback function for downlink data

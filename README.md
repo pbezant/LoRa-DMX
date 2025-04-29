@@ -68,14 +68,33 @@ The project uses PlatformIO for dependency management and building. The configur
 
 ### Modifying LoRaWAN Credentials
 
-You can edit the LoRaWAN credentials in the main.cpp file:
+The project uses a `secrets.h` file to store your LoRaWAN credentials securely. This file is not included in version control to prevent accidental exposure of your keys.
 
-```cpp
-// LoRaWAN Credentials (can be changed by the user)
-uint64_t joinEUI = 0x0000000000000001; // Replace with your Application EUI
-uint64_t devEUI = 0x70B3D57ED80041B2;  // Replace with your Device EUI
-uint8_t appKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // Replace with your Application Key
-```
+1. Copy the example file to create your secrets file:
+   ```
+   cp include/secrets.h.example include/secrets.h
+   ```
+
+2. Edit the `include/secrets.h` file with your TTN credentials:
+   ```cpp
+   // LoRaWAN credentials - Replace with your own
+   const uint64_t LORAWAN_JOIN_EUI = 0x0000000000000001;  // Replace with your Join EUI
+   const uint64_t LORAWAN_DEV_EUI = 0x70B3D57ED80041B2;  // Replace with your Device EUI
+   
+   // Application Key (hex format: 45D37BF37761A61F9F071FE16D4F5777)
+   const uint8_t LORAWAN_APP_KEY[] = {
+     0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 
+     0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77
+   };
+   
+   // Network Key (same as App Key for OTAA in LoRaWAN 1.0.x)
+   const uint8_t LORAWAN_NWK_KEY[] = {
+     0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 
+     0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77
+   };
+   ```
+
+3. The `secrets.h` file is included in `.gitignore` to prevent it from being committed to your repository.
 
 ## JSON Command Format
 

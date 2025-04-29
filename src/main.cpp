@@ -74,6 +74,7 @@
 #include "LoRaManager.h"
 #include "DmxController.h"
 #include <esp_task_wdt.h>  // Watchdog
+#include "secrets.h"  // Include LoRaWAN credentials
 
 // Debug output
 #define SERIAL_BAUD 115200
@@ -97,12 +98,6 @@
 #define LORA_SPI_SCK  9   // SPI clock
 #define LORA_SPI_MISO 11  // SPI MISO
 #define LORA_SPI_MOSI 10  // SPI MOSI
-
-// LoRaWAN Credentials (can be changed by the user)
-uint64_t joinEUI = 0x0000000000000001; // 0000000000000001
-uint64_t devEUI = 0x70B3D57ED80041B2;  // 70B3D57ED80041B2
-uint8_t appKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // 45D37BF37761A61F9F071FE16D4F5777
-uint8_t nwkKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // Same as appKey for OTAA
 
 // DMX configuration - we'll use dynamic configuration from JSON
 #define MAX_FIXTURES 32           // Maximum number of fixtures supported
@@ -1519,7 +1514,7 @@ void setup() {
       Serial.println("LoRaWAN initialized successfully!");
       
       // Set the credentials
-      lora->setCredentials(joinEUI, devEUI, appKey, nwkKey);
+      lora->setCredentials(LORAWAN_JOIN_EUI, LORAWAN_DEV_EUI, LORAWAN_APP_KEY, LORAWAN_NWK_KEY);
       
       // Join the network
       Serial.println("Attempting to join the LoRaWAN network...");
