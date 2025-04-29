@@ -63,6 +63,18 @@ public:
     void setCredentials(uint64_t joinEUI, uint64_t devEUI, uint8_t* appKey, uint8_t* nwkKey);
     
     /**
+     * @brief Set the LoRaWAN credentials using hex strings for keys
+     * 
+     * @param joinEUI Join EUI
+     * @param devEUI Device EUI
+     * @param appKeyHex Application Key as hex string (32 chars without spaces)
+     * @param nwkKeyHex Network Key as hex string (32 chars without spaces)
+     * @return true if conversion was successful
+     * @return false if conversion failed (e.g., invalid hex string)
+     */
+    bool setCredentialsHex(uint64_t joinEUI, uint64_t devEUI, const String& appKeyHex, const String& nwkKeyHex);
+    
+    /**
      * @brief Join the LoRaWAN network
      * 
      * @return true if join was successful
@@ -203,6 +215,17 @@ private:
      * @return int Result code from setupChannelsDyn
      */
     int configureSubbandChannels(uint8_t targetSubBand);
+    
+    /**
+     * @brief Convert hex string to byte array
+     * 
+     * @param hexString Hex string to convert (e.g. "F30A2F42EAEA8DE5D796A22DBBC86908")
+     * @param result Byte array to store the result (must be pre-allocated)
+     * @param resultLen Length of the result array
+     * @return true if conversion was successful
+     * @return false if conversion failed
+     */
+    bool hexStringToByteArray(const String& hexString, uint8_t* result, size_t resultLen);
 };
 
 #endif // LORA_MANAGER_H 
