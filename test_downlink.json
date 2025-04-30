@@ -1,1 +1,128 @@
-{"lights":[{"address":1,"channels":[255,255,255,255,0,0,0,0]}]}
+{
+  "tests": [
+    {
+      "description": "Simple red command",
+      "command": {"cmd": "red"},
+      "expectedHex": "01",
+      "port": 1
+    },
+    {
+      "description": "Simple green command",
+      "command": {"cmd": "green"},
+      "expectedHex": "02",
+      "port": 1
+    },
+    {
+      "description": "Rainbow pattern",
+      "command": {
+        "cmd": "pattern",
+        "type": "rainbow",
+        "cycles": 3,
+        "speed": 50,
+        "staggered": true
+      },
+      "expectedJson": {
+        "test": {
+          "pattern": "rainbow",
+          "cycles": 3,
+          "speed": 50,
+          "staggered": true
+        }
+      },
+      "port": 1
+    },
+    {
+      "description": "Multiple fixtures with different colors",
+      "command": {
+        "cmd": "lights",
+        "fixtures": [
+          {"address": 1, "color": "red"},
+          {"address": 2, "color": "green"},
+          {"address": 3, "color": "blue"},
+          {"address": 4, "color": "yellow"}
+        ]
+      },
+      "expectedJson": {
+        "lights": [
+          {"address": 1, "channels": [255, 0, 0, 0]},
+          {"address": 2, "channels": [0, 255, 0, 0]},
+          {"address": 3, "channels": [0, 0, 255, 0]},
+          {"address": 4, "channels": [255, 255, 0, 0]}
+        ]
+      },
+      "port": 1
+    },
+    {
+      "description": "Strobe effect",
+      "command": {
+        "cmd": "pattern",
+        "type": "strobe",
+        "color": 1,
+        "count": 20,
+        "onTime": 50,
+        "offTime": 50
+      },
+      "expectedJson": {
+        "test": {
+          "pattern": "strobe",
+          "color": 1,
+          "count": 20,
+          "onTime": 50,
+          "offTime": 50
+        }
+      },
+      "port": 1
+    },
+    {
+      "description": "Continuous rainbow mode enable",
+      "command": {
+        "cmd": "pattern",
+        "type": "continuous",
+        "enabled": true,
+        "speed": 30,
+        "staggered": true
+      },
+      "expectedJson": {
+        "test": {
+          "pattern": "continuous",
+          "enabled": true,
+          "speed": 30,
+          "staggered": true
+        }
+      },
+      "port": 1
+    },
+    {
+      "description": "Continuous rainbow mode disable",
+      "command": {
+        "cmd": "pattern",
+        "type": "continuous",
+        "enabled": false
+      },
+      "expectedJson": {
+        "test": {
+          "pattern": "continuous",
+          "enabled": false
+        }
+      },
+      "port": 1
+    },
+    {
+      "description": "Set all fixtures to same color",
+      "command": {
+        "cmd": "lights",
+        "allFixtures": [1, 2, 3, 4],
+        "color": "purple"
+      },
+      "expectedJson": {
+        "lights": [
+          {"address": 1, "channels": [255, 0, 255, 0]},
+          {"address": 2, "channels": [255, 0, 255, 0]},
+          {"address": 3, "channels": [255, 0, 255, 0]},
+          {"address": 4, "channels": [255, 0, 255, 0]}
+        ]
+      },
+      "port": 1
+    }
+  ]
+}

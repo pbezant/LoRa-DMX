@@ -11,12 +11,12 @@
 #define APPEUI "ed733220d2a9f133"
 
 // Application Key (16 bytes, hex format without spaces)
-#define APPKEY "FF20F547E69E9DBD2F30C4E66FBEF960"
+#define APPKEY "F7EDCFE4617E66701665A13A2B76DD52"
 
 // Network Key (16 bytes, hex format without spaces)
 // For LoRaWAN 1.1, this should be a different key than APPKEY
 // For LoRaWAN 1.0.x, this can be the same as APPKEY
-#define NWKKEY "FF20F547E69E9DBD2F30C4E66FBEF960"
+#define NWKKEY "F7EDCFE4617E66701665A13A2B76DD52"
 
 // Note: For security reasons, it's recommended to store these credentials
 // in a separate file that is not committed to version control.
