@@ -99,10 +99,10 @@
 #define LORA_SPI_MOSI 10  // SPI MOSI
 
 // LoRaWAN Credentials (can be changed by the user)
-uint64_t joinEUI = 0x0000000000000001; // 0000000000000001
-uint64_t devEUI = 0x70B3D57ED80041B2;  // 70B3D57ED80041B2
-uint8_t appKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // 45D37BF37761A61F9F071FE16D4F5777
-uint8_t nwkKey[] = {0x45, 0xD3, 0x7B, 0xF3, 0x77, 0x61, 0xA6, 0x1F, 0x9F, 0x07, 0x1F, 0xE1, 0x6D, 0x4F, 0x57, 0x77}; // Same as appKey for OTAA
+uint64_t joinEUI = 0xED733220D2A9F133; // 0000000000000001
+uint64_t devEUI = 0x90cff868ef8bd4cc;  // 70B3D57ED80041B2
+uint8_t appKey[] = {0xF7, 0xED, 0xCF, 0xE4, 0x61, 0x7E, 0x66, 0x70, 0x16, 0x65, 0xA1, 0x3A, 0x2B, 0x76, 0xDD, 0x52}; // 45D37BF37761A61F9F071FE16D4F5777
+uint8_t nwkKey[] = {0xF7, 0xED, 0xCF, 0xE4, 0x61, 0x7E, 0x66, 0x70, 0x16, 0x65, 0xA1, 0x3A, 0x2B, 0x76, 0xDD, 0x52}; // Same as appKey for OTAA
 
 // DMX configuration - we'll use dynamic configuration from JSON
 #define MAX_FIXTURES 32           // Maximum number of fixtures supported
@@ -124,8 +124,9 @@ TaskHandle_t dmxTaskHandle = NULL;
 // Add flag to control DMX during RX windows - set to true to continue DMX during RX windows
 bool keepDmxDuringRx = true;
 
-// Forward declaration of the callback function
+// Forward declarations
 void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port);
+bool processLightsJson(JsonArray lightsArray);
 
 // Placeholder for the received data
 uint8_t receivedData[MAX_JSON_SIZE];
@@ -174,120 +175,15 @@ void printDmxValues(int startAddr, int numChannels) {
   Serial.println();
 }
 
-// Improved JSON light processing
-bool processLightsJson(JsonArray lightsArray) {
-  if (!dmxInitialized || dmx == NULL) {
-    Serial.println("DMX not initialized, cannot process lights array");
-    return false;
-  }
-  
-  Serial.println("\n===== PROCESSING DOWNLINK LIGHTS COMMAND =====");
-  Serial.println("Starting DMX values:");
-  // Print current values for first 20 channels
-  printDmxValues(1, 20);
-  
-  bool atLeastOneValid = false;
-  
-  // Iterate through each light in the array
-  for (JsonObject light : lightsArray) {
-    // Check if the light has an address field
-    if (!light.containsKey("address")) {
-      Serial.println("Light missing 'address' field, skipping");
-      continue;
-    }
-    
-    // Get the DMX address
-    int address = light["address"].as<int>();
-    
-    // Check if address is valid
-    if (address < 1 || address > 512) {
-      Serial.print("Invalid DMX address: ");
-      Serial.println(address);
-      continue;
-    }
-    
-    // Check if the light has a channels array
-    if (!light.containsKey("channels")) {
-      Serial.println("Light missing 'channels' array, skipping");
-      continue;
-    }
-    
-    // Get the channels array
-    JsonArray channelsArray = light["channels"];
-    
-    // Check if it's not empty
-    if (channelsArray.size() == 0) {
-      Serial.println("Empty channels array, skipping");
-      continue;
-    }
-    
-    Serial.print("Setting light at address ");
-    Serial.print(address);
-    Serial.print(" with ");
-    Serial.print(channelsArray.size());
-    Serial.println(" channels:");
-    
-    // Set the channels
-    int channelIndex = 0;
-    for (JsonVariant channelValue : channelsArray) {
-      int value = channelValue.as<int>();
-      
-      // Validate channel value (0-255)
-      value = max(0, min(value, 255));
-      
-      // DMX channels are 1-based
-      int dmxChannel = address + channelIndex;
-      
-      // Log the channel being set
-      Serial.print("  Channel ");
-      Serial.print(dmxChannel);
-      Serial.print(" = ");
-      Serial.println(value);
-      
-      // Don't exceed DMX_PACKET_SIZE
-      if (dmxChannel < DMX_PACKET_SIZE) {
-        dmx->getDmxData()[dmxChannel] = value;
-        channelIndex++;
-      } else {
-        Serial.print("DMX channel out of range: ");
-        Serial.println(dmxChannel);
-        break;
-      }
-    }
-    
-    // At least one light was processed successfully
-    atLeastOneValid = true;
-    
-    // Print debug info
-    Serial.print("Set DMX address ");
-    Serial.print(address);
-    Serial.print(" to values: [");
-    for (int i = 0; i < channelsArray.size(); i++) {
-      if (i > 0) Serial.print(", ");
-      Serial.print(dmx->getDmxData()[address + i]);
-    }
-    Serial.println("]");
-  }
-  
-  // Send data if at least one light was valid
-  if (atLeastOneValid) {
-    Serial.println("Sending updated DMX values to fixtures...");
-    
-    // Print final values for verification
-    Serial.println("Final DMX values being sent:");
-    printDmxValues(1, 20);
-    
-    dmx->sendData();
-    
-    // Save settings to persistent storage
-    dmx->saveSettings();
-    Serial.println("DMX settings saved to persistent storage");
-    
-    return true;
-  }
-  
-  return false;
-}
+// Add pattern state persistence structure before DmxPattern class
+struct PatternState {
+  bool isActive;
+  uint8_t patternType;
+  int speed;
+  int maxCycles;
+  bool staggered;
+  uint32_t step;
+};
 
 // Add pattern handler class before the main setup() function
 class DmxPattern {
@@ -301,7 +197,7 @@ public:
     ALTERNATE
   };
 
-  DmxPattern() : active(false), patternType(NONE), speed(50), step(0), lastUpdate(0), cycleCount(0), maxCycles(5) {}
+  DmxPattern() : active(false), patternType(NONE), speed(50), step(0), lastUpdate(0), cycleCount(0), maxCycles(5), staggered(true) {}
 
   void start(PatternType type, int patternSpeed, int cycles = 5) {
     active = true;
@@ -311,6 +207,7 @@ public:
     cycleCount = 0;
     maxCycles = cycles;
     lastUpdate = millis();
+    staggered = true;
     
     Serial.print("Pattern started: ");
     switch (patternType) {
@@ -321,16 +218,86 @@ public:
       case ALTERNATE: Serial.println("ALTERNATE"); break;
       default: Serial.println("UNKNOWN");
     }
+
+    // Save pattern state when started
+    savePatternState();
   }
 
   void stop() {
     active = false;
     patternType = NONE;
     Serial.println("Pattern stopped");
+    
+    // Clear saved pattern state when stopped
+    clearSavedPatternState();
   }
   
   bool isActive() {
     return active;
+  }
+
+  // Add save pattern state function
+  void savePatternState() {
+    if (!dmxInitialized || dmx == NULL) return;
+    
+    PatternState state;
+    state.isActive = active;
+    state.patternType = (uint8_t)patternType;
+    state.speed = speed;
+    state.maxCycles = maxCycles;
+    state.staggered = staggered;
+    state.step = step;
+
+    // Use DMX controller's persistent storage to save pattern state
+    dmx->saveCustomData("pattern_state", (uint8_t*)&state, sizeof(PatternState));
+    Serial.println("Pattern state saved to persistent storage");
+  }
+
+  // Add restore pattern state function
+  void restorePatternState() {
+    if (!dmxInitialized || dmx == NULL) return;
+    
+    PatternState state;
+    if (dmx->loadCustomData("pattern_state", (uint8_t*)&state, sizeof(PatternState))) {
+      Serial.println("Restoring saved pattern state");
+      
+      if (state.isActive) {
+        active = true;
+        patternType = (PatternType)state.patternType;
+        speed = state.speed;
+        maxCycles = state.maxCycles;
+        staggered = state.staggered;
+        step = state.step;
+        lastUpdate = millis();
+        cycleCount = 0;  // Reset cycle count on restore
+        
+        Serial.print("Restored pattern: ");
+        switch (patternType) {
+          case COLOR_FADE: Serial.println("COLOR_FADE"); break;
+          case RAINBOW: Serial.println("RAINBOW"); break;
+          case STROBE: Serial.println("STROBE"); break;
+          case CHASE: Serial.println("CHASE"); break;
+          case ALTERNATE: Serial.println("ALTERNATE"); break;
+          default: Serial.println("UNKNOWN");
+        }
+        Serial.print("Speed: "); Serial.println(speed);
+        Serial.print("Staggered: "); Serial.println(staggered ? "Yes" : "No");
+      }
+    } else {
+      Serial.println("No saved pattern state found");
+      active = false;
+      patternType = NONE;
+    }
+  }
+
+  // Add function to clear saved pattern state
+  void clearSavedPatternState() {
+    if (!dmxInitialized || dmx == NULL) return;
+    
+    PatternState state;
+    memset(&state, 0, sizeof(PatternState));  // Clear all data
+    dmx->saveCustomData("pattern_state", (uint8_t*)&state, sizeof(PatternState));
+    Serial.println("Pattern state cleared from persistent storage");
   }
   
   void update() {
@@ -340,6 +307,12 @@ public:
     
     unsigned long now = millis();
     if (now - lastUpdate < speed) {
+      return;
+    }
+    
+    // Take mutex before updating DMX data
+    if (xSemaphoreTake(dmxMutex, portMAX_DELAY) != pdTRUE) {
+      Serial.println("Failed to take DMX mutex for pattern update");
       return;
     }
     
@@ -367,16 +340,25 @@ public:
     
     // Send the DMX data
     dmx->sendData();
+
+    // Save pattern state periodically (every 10 steps)
+    if (step % 10 == 0) {
+      savePatternState();
+    }
+    
+    // Release the mutex
+    xSemaphoreGive(dmxMutex);
   }
 
 private:
   bool active;
   PatternType patternType;
   int speed;  // Time in ms between updates
-  int step;   // Current step in the pattern
+  uint32_t step;   // Current step in the pattern
   unsigned long lastUpdate;
   int cycleCount;
   int maxCycles;
+  bool staggered;
   
   // HSV to RGB conversion for color effects
   void hsvToRgb(float h, float s, float v, uint8_t& r, uint8_t& g, uint8_t& b) {
@@ -874,6 +856,128 @@ bool processJsonPayload(const String& jsonString) {
   // If we got here, no valid command objects were found
   Serial.println("JSON format error: missing 'lights', 'pattern', or 'test' object");
   return false;
+}
+
+// Improved JSON light processing
+bool processLightsJson(JsonArray lightsArray) {
+  if (!dmxInitialized || dmx == NULL) {
+    Serial.println("DMX not initialized, cannot process lights array");
+    return false;
+  }
+  
+  Serial.println("\n===== PROCESSING DOWNLINK LIGHTS COMMAND =====");
+  Serial.println("Starting DMX values:");
+  // Print current values for first 20 channels
+  printDmxValues(1, 20);
+  
+  bool atLeastOneValid = false;
+  
+  // Take mutex before modifying DMX data
+  if (xSemaphoreTake(dmxMutex, portMAX_DELAY) != pdTRUE) {
+    Serial.println("Failed to take DMX mutex, aborting light update");
+    return false;
+  }
+  
+  // Iterate through each light in the array
+  for (JsonObject light : lightsArray) {
+    // Check if the light has an address field
+    if (!light.containsKey("address")) {
+      Serial.println("Light missing 'address' field, skipping");
+      continue;
+    }
+    
+    // Get the DMX address
+    int address = light["address"].as<int>();
+    
+    // Check if address is valid
+    if (address < 1 || address > 512) {
+      Serial.print("Invalid DMX address: ");
+      Serial.println(address);
+      continue;
+    }
+    
+    // Check if the light has a channels array
+    if (!light.containsKey("channels")) {
+      Serial.println("Light missing 'channels' array, skipping");
+      continue;
+    }
+    
+    // Get the channels array
+    JsonArray channelsArray = light["channels"];
+    
+    // Check if it's not empty
+    if (channelsArray.size() == 0) {
+      Serial.println("Empty channels array, skipping");
+      continue;
+    }
+    
+    Serial.print("Setting light at address ");
+    Serial.print(address);
+    Serial.print(" with ");
+    Serial.print(channelsArray.size());
+    Serial.println(" channels:");
+    
+    // Set the channels
+    int channelIndex = 0;
+    for (JsonVariant channelValue : channelsArray) {
+      int value = channelValue.as<int>();
+      
+      // Validate channel value (0-255)
+      value = max(0, min(value, 255));
+      
+      // DMX channels are 1-based
+      int dmxChannel = address + channelIndex;
+      
+      // Log the channel being set
+      Serial.print("  Channel ");
+      Serial.print(dmxChannel);
+      Serial.print(" = ");
+      Serial.println(value);
+      
+      // Don't exceed DMX_PACKET_SIZE
+      if (dmxChannel < DMX_PACKET_SIZE) {
+        dmx->getDmxData()[dmxChannel] = value;
+        channelIndex++;
+      } else {
+        Serial.print("DMX channel out of range: ");
+        Serial.println(dmxChannel);
+        break;
+      }
+    }
+    
+    // At least one light was processed successfully
+    atLeastOneValid = true;
+    
+    // Print debug info
+    Serial.print("Set DMX address ");
+    Serial.print(address);
+    Serial.print(" to values: [");
+    for (int i = 0; i < channelsArray.size(); i++) {
+      if (i > 0) Serial.print(", ");
+      Serial.print(dmx->getDmxData()[address + i]);
+    }
+    Serial.println("]");
+  }
+  
+  // Send data if at least one light was valid
+  if (atLeastOneValid) {
+    Serial.println("Sending updated DMX values to fixtures...");
+    
+    // Print final values for verification
+    Serial.println("Final DMX values being sent:");
+    printDmxValues(1, 20);
+    
+    dmx->sendData();
+    
+    // Save settings to persistent storage
+    dmx->saveSettings();
+    Serial.println("DMX settings saved to persistent storage");
+  }
+  
+  // Release the mutex
+  xSemaphoreGive(dmxMutex);
+  
+  return atLeastOneValid;
 }
 
 // Add this helper function at the end of the file, before the loop() function
@@ -1500,11 +1604,84 @@ void setup() {
   esp_task_wdt_init(WDT_TIMEOUT, true);
   esp_task_wdt_add(NULL);
   
+  // Initialize DMX FIRST - This is the primary function
+  Serial.println("\nInitializing DMX controller...");
+  
+  try {
+    dmx = new DmxController(DMX_PORT, DMX_TX_PIN, DMX_RX_PIN, DMX_DIR_PIN);
+    Serial.println("DMX controller object created");
+    
+    // Initialize DMX
+    dmx->begin();
+    dmxInitialized = true;
+    Serial.println("DMX controller initialized successfully!");
+    
+    // Setup test fixtures - This will work even without LoRa
+    Serial.println("Setting up default test fixtures for testing");
+    // Initialize 4 test fixtures with 4 channels each (RGBW)
+    dmx->initializeFixtures(4, 4);
+    
+    // Configure fixtures with sequential DMX addresses
+    dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+    dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+    dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+    dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+    
+    // Print fixture configurations for verification
+    dmx->printFixtureValues();
+    
+    // Try to load saved settings first
+    Serial.println("\nLoading DMX settings from persistent storage...");
+    bool settingsLoaded = dmx->loadSettings();
+    
+    if (settingsLoaded) {
+      Serial.println("DMX settings loaded successfully - Restoring previous state");
+      // Send the loaded data to ensure fixtures update
+      dmx->sendData();
+    } else {
+      Serial.println("No saved DMX settings found, initializing with default state");
+      // Only set white as default if no settings exist
+      Serial.println("=== SETTING DEFAULT WHITE STATE ===");
+      for (int i = 0; i < dmx->getNumFixtures(); i++) {
+        dmx->setFixtureColor(i, 0, 0, 0, 255); // White color (R=0, G=0, B=0, W=255)
+      }
+      dmx->sendData();
+      dmx->saveSettings();
+      Serial.println("Default white state saved");
+    }
+
+    // Restore any saved pattern state
+    Serial.println("\nChecking for saved pattern state...");
+    patternHandler.restorePatternState();
+    
+    // Start DMX Task on Core 0 to handle continuous DMX output
+    xTaskCreatePinnedToCore(
+        dmxTask,           // Task function
+        "DMX Task",        // Task name
+        10000,             // Stack size
+        NULL,              // Parameters
+        1,                 // Priority (1-configMAX_PRIORITIES)
+        &dmxTaskHandle,    // Task handle
+        0);                // Run on Core 0 (LoRa runs on Core 1)
+    
+  } catch (const std::exception& e) {
+    Serial.print("ERROR: Exception during DMX initialization: ");
+    Serial.println(e.what());
+    dmx = NULL;
+    dmxInitialized = false;
+    DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
+  } catch (...) {
+    Serial.println("ERROR: Unknown exception during DMX initialization!");
+    dmx = NULL;
+    dmxInitialized = false;
+    DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
+  }
+
   // Enable continuous DMX during RX windows
   Serial.println("Enabling continuous DMX during LoRa RX windows");
   keepDmxDuringRx = true;
   
-  // Initialize LoRaWAN
+  // Initialize LoRaWAN - This is now secondary to DMX
   Serial.println("\nInitializing LoRaWAN...");
   
   try {
@@ -1525,64 +1702,31 @@ void setup() {
       Serial.println("Attempting to join the LoRaWAN network...");
       if (lora->joinNetwork()) {
         Serial.println("Successfully joined the network!");
+        // Send an uplink message to confirm device is online
+        delay(2000);  // 2 second delay before first uplink
+        String message = "{\"status\":\"online\",\"dmx\":" + String(dmxInitialized ? "true" : "false") + "}";
+        if (lora->sendString(message, 1, true)) {
+          Serial.println("Status uplink sent successfully (confirmed)");
+        }
       } else {
         Serial.println("Failed to join network, will continue attempts in background");
+        Serial.println("DMX will continue to function normally");
       }
     } else {
-      Serial.println("Failed to initialize LoRaWAN!");
+      Serial.println("Failed to initialize LoRaWAN! DMX will continue to function normally");
       loraInitialized = false;
     }
-  } catch (...) {
-    Serial.println("ERROR: Exception during LoRaWAN initialization!");
+  } catch (const std::exception& e) {
+    Serial.print("ERROR: Exception during LoRaWAN initialization: ");
+    Serial.println(e.what());
     lora = NULL;
     loraInitialized = false;
-    DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
-  }
-  
-  // Initialize DMX
-  Serial.println("\nInitializing DMX controller...");
-  
-  try {
-    dmx = new DmxController(DMX_PORT, DMX_TX_PIN, DMX_RX_PIN, DMX_DIR_PIN);
-    Serial.println("DMX controller object created");
-    
-    // Initialize DMX
-    dmx->begin();
-    dmxInitialized = true;
-    Serial.println("DMX controller initialized successfully!");
-    
-    // Set initial values to zero and send to make sure fixtures are clear
-    dmx->clearAllChannels();
-    dmx->sendData();
-    Serial.println("DMX channels cleared");
-
-    // Setup test fixtures
-    Serial.println("Setting up default test fixtures for testing");
-    // Initialize 4 test fixtures with 4 channels each (RGBW)
-    dmx->initializeFixtures(4, 4);
-    
-    // Configure fixtures with sequential DMX addresses
-    dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
-    dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
-    dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
-    dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
-    
-    // Print fixture configurations for verification
-    dmx->printFixtureValues();
-    
-    // Set all fixtures to WHITE on device reset
-    Serial.println("\n=== SETTING ALL FIXTURES TO WHITE ON STARTUP ===");
-    for (int i = 0; i < dmx->getNumFixtures(); i++) {
-      dmx->setFixtureColor(i, 0, 0, 0, 255); // White color (R=0, G=0, B=0, W=255)
-    }
-    dmx->sendData();
-    dmx->saveSettings();
-    Serial.println("All fixtures set to white");
-    
+    Serial.println("DMX will continue to function normally");
   } catch (...) {
-    Serial.println("ERROR: Exception during DMX initialization!");
-    dmx = NULL;
-    dmxInitialized = false;
+    Serial.println("ERROR: Unknown exception during LoRaWAN initialization!");
+    lora = NULL;
+    loraInitialized = false;
+    Serial.println("DMX will continue to function normally");
     DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
   }
   
@@ -1590,46 +1734,11 @@ void setup() {
   Serial.print("Free heap after setup: ");
   Serial.println(ESP.getFreeHeap());
   
-  // Start DMX Task on Core 0 to handle continuous DMX output
-  xTaskCreatePinnedToCore(
-      dmxTask,           // Task function
-      "DMX Task",        // Task name
-      10000,             // Stack size
-      NULL,              // Parameters
-      1,                 // Priority (1-configMAX_PRIORITIES)
-      &dmxTaskHandle,    // Task handle
-      0);                // Run on Core 0 (LoRa runs on Core 1)
-  
   // Report which core this setup function is running on
   Serial.print("Main setup running on core: ");
   Serial.println(xPortGetCoreID());
   
-  // Send an uplink message to confirm device is online
-  if (loraInitialized) {
-    // Add delay before first transmission to ensure network is ready
-    Serial.println("Preparing to send first uplink...");
-    delay(2000);  // 2 second delay before first uplink
-    
-    String message = "{\"status\":\"online\",\"dmx\":" + String(dmxInitialized ? "true" : "false") + "}";
-    if (lora->sendString(message, 1, true)) { // Changed to confirmed uplink
-      Serial.println("Status uplink sent successfully (confirmed)");
-    } else {
-      Serial.println("Failed to send status uplink");
-    }
-  }
-  
-  // If DMX is initialized, set up fixtures but don't run automatic demos
-  if (dmxInitialized) {
-    // Load any saved settings from persistent storage
-    Serial.println("Loading DMX settings from persistent storage...");
-    if (dmx->loadSettings()) {
-      Serial.println("DMX settings loaded successfully");
-    } else {
-      Serial.println("No saved DMX settings found, using defaults");
-    }
-  }
-  
-  // Final setup indicator
+  // Final setup indicator - Three blinks means everything is ready
   DmxController::blinkLED(LED_PIN, 3, 200);
 }
 
