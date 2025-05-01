@@ -218,6 +218,11 @@ public:
      */
     void setDefaultWhite();
 
+    // Add custom data storage methods
+    bool saveCustomData(const char* key, uint8_t* data, size_t size);
+    bool loadCustomData(const char* key, uint8_t* data, size_t size);
+    bool clearCustomData(const char* key);
+
 private:
     uint8_t _dmxPort;
     uint8_t _txPin;
@@ -237,6 +242,10 @@ private:
     
     // Helper function to convert HSV to RGB for rainbow effects
     RgbwColor hsvToRgb(uint8_t h, uint8_t s, uint8_t v);
+
+    // Add preferences namespace for custom data
+    static const char* CUSTOM_PREFS_NAMESPACE;
+    Preferences customPrefs;
 };
 
 #endif // DMX_CONTROLLER_H 

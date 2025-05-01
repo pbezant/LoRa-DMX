@@ -7,6 +7,9 @@
 
 #include "DmxController.h"
 
+// Define the static member
+const char* DmxController::CUSTOM_PREFS_NAMESPACE = "dmx_custom";
+
 // Constructor
 DmxController::DmxController(uint8_t dmxPort, uint8_t txPin, uint8_t rxPin, uint8_t dirPin) {
     _dmxPort = dmxPort;
@@ -1023,4 +1026,65 @@ RgbwColor DmxController::hsvToRgb(uint8_t h, uint8_t s, uint8_t v) {
     
     rgb.w = 0; // No white for rainbow effects
     return rgb;
+}
+
+bool DmxController::saveCustomData(const char* key, uint8_t* data, size_t size) {
+    if (!customPrefs.begin(CUSTOM_PREFS_NAMESPACE, false)) {
+        Serial.println("Failed to initialize custom preferences");
+        return false;
+    }
+
+    bool success = customPrefs.putBytes(key, data, size);
+    customPrefs.end();
+    
+    if (success) {
+        Serial.print("Saved custom data for key: ");
+        Serial.println(key);
+    } else {
+        Serial.print("Failed to save custom data for key: ");
+        Serial.println(key);
+    }
+    
+    return success;
+}
+
+bool DmxController::loadCustomData(const char* key, uint8_t* data, size_t size) {
+    if (!customPrefs.begin(CUSTOM_PREFS_NAMESPACE, true)) {
+        Serial.println("Failed to initialize custom preferences");
+        return false;
+    }
+
+    size_t readSize = customPrefs.getBytes(key, data, size);
+    customPrefs.end();
+    
+    bool success = (readSize == size);
+    if (success) {
+        Serial.print("Loaded custom data for key: ");
+        Serial.println(key);
+    } else {
+        Serial.print("Failed to load custom data for key: ");
+        Serial.println(key);
+    }
+    
+    return success;
+}
+
+bool DmxController::clearCustomData(const char* key) {
+    if (!customPrefs.begin(CUSTOM_PREFS_NAMESPACE, false)) {
+        Serial.println("Failed to initialize custom preferences");
+        return false;
+    }
+
+    bool success = customPrefs.remove(key);
+    customPrefs.end();
+    
+    if (success) {
+        Serial.print("Cleared custom data for key: ");
+        Serial.println(key);
+    } else {
+        Serial.print("Failed to clear custom data for key: ");
+        Serial.println(key);
+    }
+    
+    return success;
 } 
