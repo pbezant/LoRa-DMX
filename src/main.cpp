@@ -124,8 +124,9 @@ TaskHandle_t dmxTaskHandle = NULL;
 // Add flag to control DMX during RX windows - set to true to continue DMX during RX windows
 bool keepDmxDuringRx = true;
 
-// Forward declaration of the callback function
+// Forward declarations
 void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port);
+bool processLightsJson(JsonArray lightsArray);
 
 // Placeholder for the received data
 uint8_t receivedData[MAX_JSON_SIZE];
