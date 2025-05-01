@@ -71,9 +71,11 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <SPI.h>  // Include SPI library explicitly
+#include <vector>
 #include "LoRaManager.h"
 #include "DmxController.h"
 #include <esp_task_wdt.h>  // Watchdog
+#include "secrets.h"  // Include the secrets.h file for LoRaWAN credentials
 
 // Debug output
 #define SERIAL_BAUD 115200
@@ -98,11 +100,30 @@
 #define LORA_SPI_MISO 11  // SPI MISO
 #define LORA_SPI_MOSI 10  // SPI MOSI
 
-// LoRaWAN Credentials (can be changed by the user)
-uint64_t joinEUI = 0xED733220D2A9F133; // 0000000000000001
-uint64_t devEUI = 0x90cff868ef8bd4cc;  // 70B3D57ED80041B2
-uint8_t appKey[] = {0xF7, 0xED, 0xCF, 0xE4, 0x61, 0x7E, 0x66, 0x70, 0x16, 0x65, 0xA1, 0x3A, 0x2B, 0x76, 0xDD, 0x52}; // 45D37BF37761A61F9F071FE16D4F5777
-uint8_t nwkKey[] = {0xF7, 0xED, 0xCF, 0xE4, 0x61, 0x7E, 0x66, 0x70, 0x16, 0x65, 0xA1, 0x3A, 0x2B, 0x76, 0xDD, 0x52}; // Same as appKey for OTAA
+// LoRaWAN Credentials from secrets.h (pre-defined in secrets.h)
+// Convert hex EUI strings to uint64_t
+uint64_t joinEUI = 0;
+uint64_t devEUI = 0;
+// No need for byte arrays now, we'll use the hex strings directly
+
+// Function to convert hex string to uint64_t for the EUIs
+uint64_t hexStringToUint64(const char* hexStr) {
+  uint64_t result = 0;
+  // Process 16 characters (8 bytes)
+  for (int i = 0; i < 16 && hexStr[i] != '\0'; i++) {
+    char c = hexStr[i];
+    uint8_t nibble = 0;
+    if (c >= '0' && c <= '9') {
+      nibble = c - '0';
+    } else if (c >= 'A' && c <= 'F') {
+      nibble = c - 'A' + 10;
+    } else if (c >= 'a' && c <= 'f') {
+      nibble = c - 'a' + 10;
+    }
+    result = (result << 4) | nibble;
+  }
+  return result;
+}
 
 // DMX configuration - we'll use dynamic configuration from JSON
 #define MAX_FIXTURES 32           // Maximum number of fixtures supported
@@ -127,6 +148,7 @@ bool keepDmxDuringRx = true;
 // Forward declarations
 void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port);
 bool processLightsJson(JsonArray lightsArray);
+void processMessageQueue();  // Add this forward declaration
 
 // Placeholder for the received data
 uint8_t receivedData[MAX_JSON_SIZE];
@@ -523,6 +545,92 @@ private:
 
 // Create a global pattern handler
 DmxPattern patternHandler;
+
+// Add connection state tracking
+bool isConnected = false;
+uint32_t lastConnectionAttempt = 0;
+const uint32_t CONNECTION_RETRY_INTERVAL = 60000; // 1 minute between retries
+
+// Add message queue for priority handling
+struct PendingMessage {
+    String payload;
+    uint8_t port;
+    bool confirmed;
+    uint8_t priority;  // 0 = highest, 255 = lowest
+    uint32_t timestamp;
+};
+
+std::vector<PendingMessage> messageQueue;
+const size_t MAX_QUEUE_SIZE = 10;
+
+// Event callback functions
+void onConnectionStateChange(bool connected) {
+    isConnected = connected;
+    Serial.print("LoRaWAN connection state changed: ");
+    Serial.println(connected ? "CONNECTED" : "DISCONNECTED");
+    
+    if (connected) {
+        // Send any queued messages
+        processMessageQueue();
+    }
+}
+
+void onTransmissionComplete(bool success, int errorCode) {
+    if (success) {
+        Serial.println("Transmission completed successfully!");
+    } else {
+        Serial.print("Transmission failed with error code: ");
+        Serial.println(errorCode);
+    }
+}
+
+void processMessageQueue() {
+    if (!isConnected || messageQueue.empty()) return;
+    
+    // Sort messages by priority (lowest number = highest priority)
+    std::sort(messageQueue.begin(), messageQueue.end(),
+        [](const PendingMessage& a, const PendingMessage& b) {
+            return a.priority < b.priority;
+        });
+    
+    // Try to send the highest priority message
+    const PendingMessage& msg = messageQueue.front();
+    if (lora->sendString(msg.payload, msg.port, msg.confirmed)) {
+        messageQueue.erase(messageQueue.begin());
+    }
+}
+
+void queueMessage(const String& payload, uint8_t port, bool confirmed, uint8_t priority) {
+    // If queue is full, remove lowest priority message
+    if (messageQueue.size() >= MAX_QUEUE_SIZE) {
+        auto lowestPriority = std::max_element(messageQueue.begin(), messageQueue.end(),
+            [](const PendingMessage& a, const PendingMessage& b) {
+                return a.priority < b.priority;
+            });
+        
+        if (lowestPriority != messageQueue.end() && lowestPriority->priority > priority) {
+            messageQueue.erase(lowestPriority);
+        } else {
+            Serial.println("Message queue full and new message priority too low");
+            return;
+        }
+    }
+    
+    PendingMessage msg = {
+        .payload = payload,
+        .port = port,
+        .confirmed = confirmed,
+        .priority = priority,
+        .timestamp = millis()
+    };
+    
+    messageQueue.push_back(msg);
+    
+    // Try to process the queue immediately if we're connected
+    if (isConnected) {
+        processMessageQueue();
+    }
+}
 
 /**
  * Process JSON payload and control DMX fixtures
@@ -1516,32 +1624,40 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
  * @param port The port on which the data was received
  */
 void handleDownlink(uint8_t* payload, size_t size, uint8_t port) {
-  Serial.print("Received downlink on port ");
-  Serial.print(port);
-  Serial.print(", size: ");
-  Serial.println(size);
-  
-  // Convert payload to string
-  String payloadStr = "";
-  for (size_t i = 0; i < size; i++) {
-    payloadStr += (char)payload[i];
-  }
-  
-  // Process the payload as JSON
-  if (dmxInitialized) {
-    bool success = processJsonPayload(payloadStr);
-    if (success) {
-      // Blink LED to indicate successful processing
-      DmxController::blinkLED(LED_PIN, 2, 200);
-    } else {
-      // Blink LED rapidly to indicate error
-      DmxController::blinkLED(LED_PIN, 5, 100);
+    Serial.printf("Received downlink on port %d, size: %d\n", port, size);
+    
+    try {
+        // Convert payload to string
+        String payloadStr = "";
+        for (size_t i = 0; i < size; i++) {
+            payloadStr += (char)payload[i];
+        }
+        
+        // Process the payload
+        if (dmxInitialized) {
+            bool success = processJsonPayload(payloadStr);
+            if (success) {
+                // Queue confirmation message with high priority (50)
+                String response = "{\"ack\":true,\"port\":" + String(port) + "}";
+                queueMessage(response, 1, true, 50);
+                
+                DmxController::blinkLED(LED_PIN, 2, 200);
+            } else {
+                // Queue error message with high priority (50)
+                String response = "{\"ack\":false,\"error\":\"processing_failed\"}";
+                queueMessage(response, 1, true, 50);
+                
+                DmxController::blinkLED(LED_PIN, 5, 100);
+            }
+        }
+    } catch (const std::exception& e) {
+        Serial.print("Error processing downlink: ");
+        Serial.println(e.what());
+        
+        // Queue error message with high priority (50)
+        String response = "{\"ack\":false,\"error\":\"exception\"}";
+        queueMessage(response, 1, true, 50);
     }
-  } else {
-    Serial.println("DMX not initialized, cannot process payload");
-    // Blink LED rapidly to indicate error
-    DmxController::blinkLED(LED_PIN, 5, 100);
-  }
 }
 
 /**
@@ -1580,166 +1696,88 @@ void dmxTask(void * parameter) {
   }
 }
 
-void setup() {
-  // Initialize Serial at defined baud rate
-  Serial.begin(SERIAL_BAUD);
-  delay(500);
-  Serial.println("\n\n=== DMX LoRa Controller Starting ===");
-  Serial.println("Version: 1.0.0");
+void initializeLoRaWAN() {
+  // Convert hex strings to uint64_t for EUIs
+  joinEUI = hexStringToUint64(APPEUI);
+  devEUI = hexStringToUint64(DEVEUI);
+
+  Serial.println("Initializing LoRaWAN with credentials from secrets.h:");
+  Serial.print("Join EUI: ");
+  Serial.println(APPEUI);
+  Serial.print("Device EUI: ");
+  Serial.println(DEVEUI);
+  Serial.print("App Key: ");
+  Serial.println(APPKEY);
   
-  // Configure the diagnostic LED as an output
-  pinMode(LED_PIN, OUTPUT);
-  
-  // Blink the LED twice to indicate startup
-  DmxController::blinkLED(LED_PIN, 2, 500);
-  
-  // Create mutex for DMX thread safety
-  dmxMutex = xSemaphoreCreateMutex();
-  if (dmxMutex == NULL) {
-    Serial.println("ERROR: Could not create DMX mutex");
+  // Initialize LoRa
+  if (!lora->begin(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RESET_PIN, LORA_BUSY_PIN)) {
+    Serial.println("LoRa initialization failed!");
+    return;
   }
   
-  // Initialize Watchdog Timer
-  Serial.println("Setting up watchdog timer...");
-  esp_task_wdt_init(WDT_TIMEOUT, true);
-  esp_task_wdt_add(NULL);
+  // Set the credentials using hex strings directly
+  if (!lora->setCredentialsHex(joinEUI, devEUI, APPKEY, NWKKEY)) {
+    Serial.println("Failed to set credentials!");
+    return;
+  }
   
-  // Initialize DMX FIRST - This is the primary function
-  Serial.println("\nInitializing DMX controller...");
+  // Set downlink callback
+  lora->setDownlinkCallback(handleDownlinkCallback);
   
-  try {
-    dmx = new DmxController(DMX_PORT, DMX_TX_PIN, DMX_RX_PIN, DMX_DIR_PIN);
-    Serial.println("DMX controller object created");
+  // Try to join the network
+  Serial.println("Attempting to join LoRaWAN network...");
+  if (lora->joinNetwork()) {
+    Serial.println("Successfully joined the network!");
+    isConnected = true;
+  } else {
+    Serial.println("Failed to join network, will retry later");
+    lastConnectionAttempt = millis();
+  }
+  
+  loraInitialized = true;
+}
+
+void setup() {
+    Serial.begin(115200);
+    delay(3000);
+    Serial.println("Starting up...");
     
-    // Initialize DMX
+    // Initialize the LED pin
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
+    
+    // Initialize the DMX controller
+    dmx = new DmxController(DMX_PORT, DMX_TX_PIN, DMX_RX_PIN, DMX_DIR_PIN);
     dmx->begin();
     dmxInitialized = true;
-    Serial.println("DMX controller initialized successfully!");
     
-    // Setup test fixtures - This will work even without LoRa
-    Serial.println("Setting up default test fixtures for testing");
-    // Initialize 4 test fixtures with 4 channels each (RGBW)
-    dmx->initializeFixtures(4, 4);
-    
-    // Configure fixtures with sequential DMX addresses
-    dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
-    dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
-    dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
-    dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
-    
-    // Print fixture configurations for verification
-    dmx->printFixtureValues();
-    
-    // Try to load saved settings first
-    Serial.println("\nLoading DMX settings from persistent storage...");
-    bool settingsLoaded = dmx->loadSettings();
-    
-    if (settingsLoaded) {
-      Serial.println("DMX settings loaded successfully - Restoring previous state");
-      // Send the loaded data to ensure fixtures update
-      dmx->sendData();
-    } else {
-      Serial.println("No saved DMX settings found, initializing with default state");
-      // Only set white as default if no settings exist
-      Serial.println("=== SETTING DEFAULT WHITE STATE ===");
-      for (int i = 0; i < dmx->getNumFixtures(); i++) {
-        dmx->setFixtureColor(i, 0, 0, 0, 255); // White color (R=0, G=0, B=0, W=255)
-      }
-      dmx->sendData();
-      dmx->saveSettings();
-      Serial.println("Default white state saved");
+    // Create mutex for thread-safe DMX data access
+    dmxMutex = xSemaphoreCreateMutex();
+    if (dmxMutex == NULL) {
+        Serial.println("Failed to create DMX mutex!");
+        return;
     }
-
-    // Restore any saved pattern state
-    Serial.println("\nChecking for saved pattern state...");
-    patternHandler.restorePatternState();
     
-    // Start DMX Task on Core 0 to handle continuous DMX output
+    // Initialize LoRa manager
+    lora = new LoRaManager();
+    
+    // Initialize LoRaWAN with credentials from secrets.h
+    initializeLoRaWAN();
+    
+    // Start DMX task on Core 0
     xTaskCreatePinnedToCore(
-        dmxTask,           // Task function
-        "DMX Task",        // Task name
-        10000,             // Stack size
-        NULL,              // Parameters
-        1,                 // Priority (1-configMAX_PRIORITIES)
-        &dmxTaskHandle,    // Task handle
-        0);                // Run on Core 0 (LoRa runs on Core 1)
+        dmxTask,     // Task function
+        "DMX Task",  // Name
+        4096,        // Stack size
+        NULL,        // Parameters
+        1,           // Priority
+        &dmxTaskHandle, // Task handle
+        0            // Core (0)
+    );
     
-  } catch (const std::exception& e) {
-    Serial.print("ERROR: Exception during DMX initialization: ");
-    Serial.println(e.what());
-    dmx = NULL;
-    dmxInitialized = false;
-    DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
-  } catch (...) {
-    Serial.println("ERROR: Unknown exception during DMX initialization!");
-    dmx = NULL;
-    dmxInitialized = false;
-    DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
-  }
-
-  // Enable continuous DMX during RX windows
-  Serial.println("Enabling continuous DMX during LoRa RX windows");
-  keepDmxDuringRx = true;
-  
-  // Initialize LoRaWAN - This is now secondary to DMX
-  Serial.println("\nInitializing LoRaWAN...");
-  
-  try {
-    lora = new LoRaManager(US915, 2); // US915 band, subband 2
-    
-    // Set callback for handling downlinks
-    lora->setDownlinkCallback(handleDownlinkCallback);
-    
-    // Initialize LoRaWAN with the provided credentials
-    if (lora->begin(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RESET_PIN, LORA_BUSY_PIN)) {
-      loraInitialized = true;
-      Serial.println("LoRaWAN initialized successfully!");
-      
-      // Set the credentials
-      lora->setCredentials(joinEUI, devEUI, appKey, nwkKey);
-      
-      // Join the network
-      Serial.println("Attempting to join the LoRaWAN network...");
-      if (lora->joinNetwork()) {
-        Serial.println("Successfully joined the network!");
-        // Send an uplink message to confirm device is online
-        delay(2000);  // 2 second delay before first uplink
-        String message = "{\"status\":\"online\",\"dmx\":" + String(dmxInitialized ? "true" : "false") + "}";
-        if (lora->sendString(message, 1, true)) {
-          Serial.println("Status uplink sent successfully (confirmed)");
-        }
-      } else {
-        Serial.println("Failed to join network, will continue attempts in background");
-        Serial.println("DMX will continue to function normally");
-      }
-    } else {
-      Serial.println("Failed to initialize LoRaWAN! DMX will continue to function normally");
-      loraInitialized = false;
-    }
-  } catch (const std::exception& e) {
-    Serial.print("ERROR: Exception during LoRaWAN initialization: ");
-    Serial.println(e.what());
-    lora = NULL;
-    loraInitialized = false;
-    Serial.println("DMX will continue to function normally");
-  } catch (...) {
-    Serial.println("ERROR: Unknown exception during LoRaWAN initialization!");
-    lora = NULL;
-    loraInitialized = false;
-    Serial.println("DMX will continue to function normally");
-    DmxController::blinkLED(LED_PIN, 5, 100);  // Error indicator
-  }
-  
-  Serial.println("\nSetup complete!");
-  Serial.print("Free heap after setup: ");
-  Serial.println(ESP.getFreeHeap());
-  
-  // Report which core this setup function is running on
-  Serial.print("Main setup running on core: ");
-  Serial.println(xPortGetCoreID());
-  
-  // Final setup indicator - Three blinks means everything is ready
-  DmxController::blinkLED(LED_PIN, 3, 200);
+    // Initialize watchdog timer
+    esp_task_wdt_init(WDT_TIMEOUT, true);
+    esp_task_wdt_add(NULL);
 }
 
 void loop() {
@@ -1749,9 +1787,19 @@ void loop() {
   // Reset the watchdog timer
   esp_task_wdt_reset();
   
-  // Main app checks for lora events - this is the only LoRa task on Core 1
+  // Handle LoRaWAN events
   if (loraInitialized && lora != NULL) {
-    lora->handleEvents();  // Process LoRaWAN events
+    lora->handleEvents();
+    
+    // Check connection state and retry if needed
+    if (!isConnected && millis() - lastConnectionAttempt >= CONNECTION_RETRY_INTERVAL) {
+        lastConnectionAttempt = millis();
+        Serial.println("Attempting to reconnect to LoRaWAN network...");
+        lora->joinNetwork();
+    }
+    
+    // Process message queue periodically
+    processMessageQueue();
   }
   
   // Send a heartbeat ping every 60 seconds
@@ -1759,9 +1807,9 @@ void loop() {
     lastHeartbeat = currentMillis;
     
     if (loraInitialized && lora != NULL) {
-      Serial.println("Sending heartbeat ping...");
-      String message = "{\"hb\":1}";
-      lora->sendString(message, 1, true);  // Send on port 1, confirmed
+        String message = "{\"hb\":1}";
+        // Queue heartbeat with low priority (200)
+        queueMessage(message, 1, true, 200);
     }
   }
   

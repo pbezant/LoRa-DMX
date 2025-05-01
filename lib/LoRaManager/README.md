@@ -9,6 +9,7 @@ A library for managing LoRaWAN communication using RadioLib for ESP32 boards.
 * Automatic handling of network join and reconnection
 * Support for both confirmed and unconfirmed data transmission
 * Error handling with automatic retry mechanism
+* Support for hex string credentials instead of byte arrays
 
 ## Dependencies
 
@@ -111,6 +112,66 @@ void loop() {
 }
 ```
 
+### Using Hex String Keys
+
+You can also use hex strings for the AppKey and NwkKey instead of byte arrays:
+
+```cpp
+#include <Arduino.h>
+#include <LoRaManager.h>
+
+// Define LoRa pins for your board
+#define LORA_CS   18
+#define LORA_DIO1 23
+#define LORA_RST  14
+#define LORA_BUSY 33
+
+// LoRaWAN credentials
+uint64_t joinEUI = 0x0000000000000000;
+uint64_t devEUI = 0x0000000000000000;
+
+// Keys as hex strings (32 characters without spaces)
+String appKeyHex = "F30A2F42EAEA8DE5D796A22DBBC86908";
+String nwkKeyHex = "F30A2F42EAEA8DE5D796A22DBBC86908";
+
+// Create LoRaManager instance
+LoRaManager lora;
+
+void setup() {
+  Serial.begin(115200);
+  delay(3000);
+  
+  Serial.println("Starting LoRaWAN communication...");
+  
+  // Initialize the LoRa module
+  if (!lora.begin(LORA_CS, LORA_DIO1, LORA_RST, LORA_BUSY)) {
+    Serial.println("Failed to initialize LoRa!");
+    while (1);
+  }
+  
+  // Set LoRaWAN credentials using hex strings
+  if (lora.setCredentialsHex(joinEUI, devEUI, appKeyHex, nwkKeyHex)) {
+    Serial.println("Credentials set successfully!");
+  } else {
+    Serial.println("Failed to set credentials! Check your hex strings.");
+    while (1);
+  }
+  
+  // Join the network
+  Serial.println("Joining LoRaWAN network...");
+  if (lora.joinNetwork()) {
+    Serial.println("Successfully joined the network!");
+  } else {
+    Serial.println("Failed to join the network!");
+    // The library will automatically retry when sending data
+  }
+}
+
+void loop() {
+  // Same as the basic example
+}
+```
+
 ## API Reference
 
 ### Constructor
@@ -123,6 +184,7 @@ LoRaManager();
 
 - `bool begin(int8_t pinCS, int8_t pinDIO1, int8_t pinReset, int8_t pinBusy)` - Initialize the LoRa module
 - `void setCredentials(uint64_t joinEUI, uint64_t devEUI, uint8_t* appKey, uint8_t* nwkKey)` - Set the LoRaWAN credentials
+- `bool setCredentialsHex(uint64_t joinEUI, uint64_t devEUI, const String& appKeyHex, const String& nwkKeyHex)` - Set the LoRaWAN credentials using hex strings
 - `bool joinNetwork()` - Join the LoRaWAN network
 - `bool sendData(uint8_t* data, size_t len, uint8_t port = 1, bool confirmed = false)` - Send data to the LoRaWAN network
 - `bool sendString(const String& data, uint8_t port = 1)` - Send a string to the LoRaWAN network
