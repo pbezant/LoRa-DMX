@@ -7,6 +7,11 @@
  * Created for US915 frequency plan (United States)
  * Uses OTAA activation for TTN
  * 
+ * IMPORTANT: This firmware operates in LoRaWAN Class C mode, which keeps
+ * the receive window open continuously. This provides immediate response to
+ * downlink commands from the server but significantly increases power consumption.
+ * FOR MAINS-POWERED APPLICATIONS ONLY - not suitable for battery operation.
+ * 
  * Supported JSON Commands:
  * 
  * 1. Direct DMX Control:
@@ -1729,6 +1734,15 @@ void initializeLoRaWAN() {
   if (lora->joinNetwork()) {
     Serial.println("Successfully joined the network!");
     isConnected = true;
+    
+    // Switch to Class C mode for continuous reception
+    Serial.println("Switching to Class C mode for immediate downlink reception...");
+    if (lora->setDeviceClass(DEVICE_CLASS_C)) {
+      Serial.println("Successfully switched to Class C mode!");
+      Serial.println("Device is now in continuous reception mode and can receive DMX commands at any time");
+    } else {
+      Serial.println("Failed to switch to Class C mode, staying in Class A");
+    }
   } else {
     Serial.println("Failed to join network, will retry later");
     lastConnectionAttempt = millis();
@@ -1795,7 +1809,33 @@ void loop() {
     if (!isConnected && millis() - lastConnectionAttempt >= CONNECTION_RETRY_INTERVAL) {
         lastConnectionAttempt = millis();
         Serial.println("Attempting to reconnect to LoRaWAN network...");
-        lora->joinNetwork();
+        if (lora->joinNetwork()) {
+            isConnected = true;
+            Serial.println("Successfully joined the network!");
+            
+            // Try to switch to Class C after successful join
+            Serial.println("Switching to Class C mode after reconnection...");
+            if (lora->setDeviceClass(DEVICE_CLASS_C)) {
+                Serial.println("Successfully switched to Class C mode!");
+            } else {
+                Serial.println("Failed to switch to Class C mode, staying in Class A");
+            }
+        }
+    }
+    
+    // Ensure device stays in Class C mode if already connected
+    if (isConnected && lora->getDeviceClass() != DEVICE_CLASS_C) {
+        // If we're connected but not in Class C, try to switch
+        static unsigned long lastClassCAttempt = 0;
+        if (millis() - lastClassCAttempt >= 60000) {  // Try every minute
+            lastClassCAttempt = millis();
+            Serial.println("Device not in Class C mode. Attempting to switch...");
+            if (lora->setDeviceClass(DEVICE_CLASS_C)) {
+                Serial.println("Successfully switched to Class C mode!");
+            } else {
+                Serial.println("Failed to switch to Class C mode");
+            }
+        }
     }
     
     // Process message queue periodically
@@ -1807,7 +1847,13 @@ void loop() {
     lastHeartbeat = currentMillis;
     
     if (loraInitialized && lora != NULL) {
-        String message = "{\"hb\":1}";
+        // Show device class in console
+        Serial.print("Current device class: ");
+        char deviceClass = lora->getDeviceClass();
+        Serial.println(deviceClass);
+        
+        // Include device class and connection status in heartbeat message
+        String message = "{\"hb\":1,\"class\":\"" + String(deviceClass) + "\"}";
         // Queue heartbeat with low priority (200)
         queueMessage(message, 1, true, 200);
     }
