@@ -310,6 +310,12 @@ public:
       return;
     }
     
+    // Take mutex before updating DMX data
+    if (xSemaphoreTake(dmxMutex, portMAX_DELAY) != pdTRUE) {
+      Serial.println("Failed to take DMX mutex for pattern update");
+      return;
+    }
+    
     lastUpdate = now;
     
     switch (patternType) {
@@ -339,6 +345,9 @@ public:
     if (step % 10 == 0) {
       savePatternState();
     }
+    
+    // Release the mutex
+    xSemaphoreGive(dmxMutex);
   }
 
 private:
@@ -863,6 +872,12 @@ bool processLightsJson(JsonArray lightsArray) {
   
   bool atLeastOneValid = false;
   
+  // Take mutex before modifying DMX data
+  if (xSemaphoreTake(dmxMutex, portMAX_DELAY) != pdTRUE) {
+    Serial.println("Failed to take DMX mutex, aborting light update");
+    return false;
+  }
+  
   // Iterate through each light in the array
   for (JsonObject light : lightsArray) {
     // Check if the light has an address field
@@ -957,11 +972,12 @@ bool processLightsJson(JsonArray lightsArray) {
     // Save settings to persistent storage
     dmx->saveSettings();
     Serial.println("DMX settings saved to persistent storage");
-    
-    return true;
   }
   
-  return false;
+  // Release the mutex
+  xSemaphoreGive(dmxMutex);
+  
+  return atLeastOneValid;
 }
 
 // Add this helper function at the end of the file, before the loop() function
