@@ -80,6 +80,7 @@
 #include "DmxController.h"
 #include <esp_task_wdt.h>  // Watchdog
 #include "secrets.h"  // Include the secrets.h file for LoRaWAN credentials
+#include "HeltecLoRaWAN.h"
 
 // Debug output
 #define SERIAL_BAUD 115200
@@ -138,6 +139,9 @@ uint64_t hexStringToUint64(const char* hexStr) {
 bool dmxInitialized = false;
 bool loraInitialized = false;
 DmxController* dmx = NULL;
+
+// Add heltecLoRaWAN global pointer here
+HeltecLoRaWAN* heltecLoRaWAN = nullptr;
 
 // Add mutex for thread-safe DMX data access
 SemaphoreHandle_t dmxMutex = NULL;
@@ -923,18 +927,16 @@ bool processJsonPayload(const String& jsonString) {
       // Simple ping command for testing downlink connectivity
       Serial.println("=== PING RECEIVED ===");
       Serial.println("Downlink communication is working!");
-      
       // Blink the LED in a distinctive pattern to indicate ping received
       for (int i = 0; i < 3; i++) {
         DmxController::blinkLED(LED_PIN, 3, 100);
         delay(500);
       }
-      
       // Send a ping response uplink
-      if (heltecLoRaWAN->sendString(response, 1, true)) {
+      String response = "{\"ping\":true}";
+      if (heltecLoRaWAN && heltecLoRaWAN->sendString(response, 1, true)) {
         Serial.println("Ping response sent (confirmed)");
       }
-      
       return true;
     }
     else {
@@ -1577,7 +1579,8 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
             if (payloadStr.indexOf("\"ping\"") > 0) {
               Serial.println("Sending ping response");
               // Send a ping response confirmation uplink
-              if (heltecLoRaWAN->sendString(response, 1, true)) {
+              String response = "{\"ping\":true}";
+              if (heltecLoRaWAN && heltecLoRaWAN->sendString(response, 1, true)) {
                 Serial.println("Ping response sent (confirmed)");
               }
             }
@@ -1690,6 +1693,10 @@ void dmxTask(void * parameter) {
 }
 
 void initializeLoRaWAN() {
+  // Instantiate heltecLoRaWAN before use
+  if (!heltecLoRaWAN) {
+    heltecLoRaWAN = new HeltecLoRaWAN();
+  }
   // Convert hex strings to uint64_t for EUIs
   joinEUI = hexStringToUint64(APPEUI);
   devEUI = hexStringToUint64(DEVEUI);
@@ -1725,7 +1732,7 @@ void initializeLoRaWAN() {
     
     // Switch to Class C mode for continuous reception
     Serial.println("Switching to Class C mode for immediate downlink reception...");
-    if (heltecLoRaWAN->setDeviceClass(DEVICE_CLASS_C)) {
+    if (heltecLoRaWAN->setDeviceClass('C')) {
       Serial.println("Successfully switched to Class C mode!");
       Serial.println("Device is now in continuous reception mode and can receive DMX commands at any time");
     } else {
@@ -1800,7 +1807,7 @@ void loop() {
             
             // Try to switch to Class C after successful join
             Serial.println("Switching to Class C mode after reconnection...");
-            if (heltecLoRaWAN->setDeviceClass(DEVICE_CLASS_C)) {
+            if (heltecLoRaWAN->setDeviceClass('C')) {
                 Serial.println("Successfully switched to Class C mode!");
             } else {
                 Serial.println("Failed to switch to Class C mode, staying in Class A");
@@ -1809,13 +1816,13 @@ void loop() {
     }
     
     // Ensure device stays in Class C mode if already connected
-    if (isConnected && heltecLoRaWAN->getDeviceClass() != DEVICE_CLASS_C) {
+    if (isConnected && heltecLoRaWAN->getDeviceClass() != 'C') {
         // If we're connected but not in Class C, try to switch
         static unsigned long lastClassCAttempt = 0;
         if (millis() - lastClassCAttempt >= 60000) {  // Try every minute
             lastClassCAttempt = millis();
             Serial.println("Device not in Class C mode. Attempting to switch...");
-            if (heltecLoRaWAN->setDeviceClass(DEVICE_CLASS_C)) {
+            if (heltecLoRaWAN->setDeviceClass('C')) {
                 Serial.println("Successfully switched to Class C mode!");
             } else {
                 Serial.println("Failed to switch to Class C mode");
@@ -1868,6 +1875,4 @@ void loop() {
   // Yield to allow other tasks to run
   delay(1);
 }
-
-HeltecLoRaWAN* heltecLoRaWAN = nullptr;
 
