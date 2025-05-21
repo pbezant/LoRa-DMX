@@ -77,7 +77,6 @@
 #include <ArduinoJson.h>
 #include <SPI.h>  // Include SPI library explicitly
 #include <vector>
-#include "LoRaManager.h"
 #include "DmxController.h"
 #include <esp_task_wdt.h>  // Watchdog
 #include "secrets.h"  // Include the secrets.h file for LoRaWAN credentials
@@ -139,7 +138,6 @@ uint64_t hexStringToUint64(const char* hexStr) {
 bool dmxInitialized = false;
 bool loraInitialized = false;
 DmxController* dmx = NULL;
-LoRaManager* lora = NULL;
 
 // Add mutex for thread-safe DMX data access
 SemaphoreHandle_t dmxMutex = NULL;
@@ -600,7 +598,7 @@ void processMessageQueue() {
     
     // Try to send the highest priority message
     const PendingMessage& msg = messageQueue.front();
-    if (lora->sendString(msg.payload, msg.port, msg.confirmed)) {
+    if (heltecLoRaWAN->sendString(msg.payload, msg.port, msg.confirmed)) {
         messageQueue.erase(messageQueue.begin());
     }
 }
@@ -933,11 +931,8 @@ bool processJsonPayload(const String& jsonString) {
       }
       
       // Send a ping response uplink
-      if (loraInitialized && lora != NULL) {
-        String response = "{\"ping_response\":\"ok\"}";
-        if (lora->sendString(response, 1, true)) {
-          Serial.println("Ping response sent (confirmed)");
-        }
+      if (heltecLoRaWAN->sendString(response, 1, true)) {
+        Serial.println("Ping response sent (confirmed)");
       }
       
       return true;
@@ -1582,11 +1577,8 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
             if (payloadStr.indexOf("\"ping\"") > 0) {
               Serial.println("Sending ping response");
               // Send a ping response confirmation uplink
-              if (loraInitialized && lora != NULL) {
-                String response = "{\"ping_response\":\"ok\",\"counter\":" + String(downlinkCounter) + "}";
-                if (lora->sendString(response, 1, true)) {
-                  Serial.println("Ping response sent (confirmed)");
-                }
+              if (heltecLoRaWAN->sendString(response, 1, true)) {
+                Serial.println("Ping response sent (confirmed)");
               }
             }
           } else {
@@ -1603,13 +1595,9 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
       } else {
         Serial.println("ERROR: DMX not initialized, cannot process command");
       }
+    } else {
+      Serial.println("ERROR: Received payload exceeds buffer size");
     }
-    
-    // For backward compatibility, also store in buffer
-    memcpy(receivedData, payload, size);
-    receivedDataSize = size;
-    receivedPort = port;
-    dataReceived = false;
   } else {
     Serial.println("ERROR: Received payload exceeds buffer size");
   }
@@ -1715,29 +1703,29 @@ void initializeLoRaWAN() {
   Serial.println(APPKEY);
   
   // Initialize LoRa
-  if (!lora->begin(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RESET_PIN, LORA_BUSY_PIN)) {
+  if (!heltecLoRaWAN->begin(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RESET_PIN, LORA_BUSY_PIN)) {
     Serial.println("LoRa initialization failed!");
     return;
   }
   
   // Set the credentials using hex strings directly
-  if (!lora->setCredentialsHex(joinEUI, devEUI, APPKEY, NWKKEY)) {
+  if (!heltecLoRaWAN->setCredentialsHex(joinEUI, devEUI, APPKEY, NWKKEY)) {
     Serial.println("Failed to set credentials!");
     return;
   }
   
   // Set downlink callback
-  lora->setDownlinkCallback(handleDownlinkCallback);
+  heltecLoRaWAN->setDownlinkCallback(handleDownlinkCallback);
   
   // Try to join the network
   Serial.println("Attempting to join LoRaWAN network...");
-  if (lora->joinNetwork()) {
+  if (heltecLoRaWAN->joinNetwork()) {
     Serial.println("Successfully joined the network!");
     isConnected = true;
     
     // Switch to Class C mode for continuous reception
     Serial.println("Switching to Class C mode for immediate downlink reception...");
-    if (lora->setDeviceClass(DEVICE_CLASS_C)) {
+    if (heltecLoRaWAN->setDeviceClass(DEVICE_CLASS_C)) {
       Serial.println("Successfully switched to Class C mode!");
       Serial.println("Device is now in continuous reception mode and can receive DMX commands at any time");
     } else {
@@ -1772,9 +1760,6 @@ void setup() {
         return;
     }
     
-    // Initialize LoRa manager
-    lora = new LoRaManager();
-    
     // Initialize LoRaWAN with credentials from secrets.h
     initializeLoRaWAN();
     
@@ -1802,20 +1787,20 @@ void loop() {
   esp_task_wdt_reset();
   
   // Handle LoRaWAN events
-  if (loraInitialized && lora != NULL) {
-    lora->handleEvents();
+  if (loraInitialized && heltecLoRaWAN != NULL) {
+    heltecLoRaWAN->handleEvents();
     
     // Check connection state and retry if needed
     if (!isConnected && millis() - lastConnectionAttempt >= CONNECTION_RETRY_INTERVAL) {
         lastConnectionAttempt = millis();
         Serial.println("Attempting to reconnect to LoRaWAN network...");
-        if (lora->joinNetwork()) {
+        if (heltecLoRaWAN->joinNetwork()) {
             isConnected = true;
             Serial.println("Successfully joined the network!");
             
             // Try to switch to Class C after successful join
             Serial.println("Switching to Class C mode after reconnection...");
-            if (lora->setDeviceClass(DEVICE_CLASS_C)) {
+            if (heltecLoRaWAN->setDeviceClass(DEVICE_CLASS_C)) {
                 Serial.println("Successfully switched to Class C mode!");
             } else {
                 Serial.println("Failed to switch to Class C mode, staying in Class A");
@@ -1824,13 +1809,13 @@ void loop() {
     }
     
     // Ensure device stays in Class C mode if already connected
-    if (isConnected && lora->getDeviceClass() != DEVICE_CLASS_C) {
+    if (isConnected && heltecLoRaWAN->getDeviceClass() != DEVICE_CLASS_C) {
         // If we're connected but not in Class C, try to switch
         static unsigned long lastClassCAttempt = 0;
         if (millis() - lastClassCAttempt >= 60000) {  // Try every minute
             lastClassCAttempt = millis();
             Serial.println("Device not in Class C mode. Attempting to switch...");
-            if (lora->setDeviceClass(DEVICE_CLASS_C)) {
+            if (heltecLoRaWAN->setDeviceClass(DEVICE_CLASS_C)) {
                 Serial.println("Successfully switched to Class C mode!");
             } else {
                 Serial.println("Failed to switch to Class C mode");
@@ -1846,10 +1831,10 @@ void loop() {
   if (currentMillis - lastHeartbeat >= 60000) {
     lastHeartbeat = currentMillis;
     
-    if (loraInitialized && lora != NULL) {
+    if (loraInitialized && heltecLoRaWAN != NULL) {
         // Show device class in console
         Serial.print("Current device class: ");
-        char deviceClass = lora->getDeviceClass();
+        char deviceClass = heltecLoRaWAN->getDeviceClass();
         Serial.println(deviceClass);
         
         // Include device class and connection status in heartbeat message
@@ -1883,4 +1868,6 @@ void loop() {
   // Yield to allow other tasks to run
   delay(1);
 }
+
+HeltecLoRaWAN* heltecLoRaWAN = nullptr;
 
