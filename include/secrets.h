@@ -19,6 +19,12 @@
 // For LoRaWAN 1.0.x, this can be the same as APPKEY
 #define NWKKEY "f7edcfe4617e66701665a13a2b76dd52"
 
+// MCCI LMIC compatibility - use the same keys with _HEX suffix
+#define JOINEUI_HEX APPEUI   // Same as APPEUI
+#define DEVEUI_HEX DEVEUI    // Same as DEVEUI
+#define APPKEY_HEX APPKEY    // Same as APPKEY
+#define NWKKEY_HEX NWKKEY    // Same as NWKKEY
+
 // Note: For security reasons, it's recommended to store these credentials
 // in a separate file that is not committed to version control.
 // You should replace these placeholder values with your actual credentials. 

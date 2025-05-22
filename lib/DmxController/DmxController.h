@@ -61,7 +61,18 @@ public:
     /**
      * Initialize the DMX controller
      */
-    void begin();
+    bool begin();
+
+    /**
+     * Initialize the DMX controller with custom parameters
+     * 
+     * @param txPin The TX pin for DMX output
+     * @param rxPin The RX pin for DMX input
+     * @param dirPin The direction pin for DMX direction control
+     * @param numChannels The number of DMX channels to use
+     * @param baudRate The baud rate for DMX communication
+     */
+    bool begin(int txPin, int rxPin, int dirPin, int numChannels, int baudRate);
 
     /**
      * Set a fixture's color with direct RGBW handling

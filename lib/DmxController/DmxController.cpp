@@ -34,7 +34,7 @@ DmxController::DmxController(uint8_t dmxPort, uint8_t txPin, uint8_t rxPin, uint
 }
 
 // Initialize the DMX controller
-void DmxController::begin() {
+bool DmxController::begin() {
     // Configure DMX with default config
     dmx_config_t config = DMX_CONFIG_DEFAULT;
     
@@ -72,6 +72,58 @@ void DmxController::begin() {
     
     // Flag as initialized even if the driver failed, since we'll use direct UART
     _isInitialized = true;
+    return _isInitialized;
+}
+
+// Initialize the DMX controller with custom parameters
+bool DmxController::begin(int txPin, int rxPin, int dirPin, int numChannels, int baudRate) {
+    // Update pin assignments if provided
+    if (txPin > 0) _txPin = txPin;
+    if (rxPin > 0) _rxPin = rxPin;
+    if (dirPin > 0) _dirPin = dirPin;
+    
+    // Configure DMX with default config
+    dmx_config_t config = DMX_CONFIG_DEFAULT;
+    
+    // Define DMX personality for RGBW control
+    dmx_personality_t personality;
+    personality.footprint = 4; // 4 channels for RGBW
+    strcpy(personality.description, "RGBW");
+    
+    // Clear the DMX data buffer first
+    memset(_dmxData, 0, DMX_PACKET_SIZE);
+    _dmxData[0] = 0; // Start code must be 0
+    
+    // Always properly delete any previous driver to avoid "already installed" error
+    // We'll ignore any errors here since it might not be installed yet
+    dmx_driver_delete((dmx_port_t)_dmxPort);
+    delay(500); // Give it time to fully uninstall
+    
+    Serial.println("Installing DMX driver with hardware UART (custom parameters)...");
+    Serial.print("DMX Channels: ");
+    Serial.print(numChannels);
+    Serial.print(", Baud Rate: ");
+    Serial.println(baudRate);
+    
+    // Set GPIO pins with direct pinMode - critical for proper operation
+    pinMode(_dirPin, OUTPUT);
+    digitalWrite(_dirPin, HIGH);  // HIGH = transmit mode
+    
+    // Configure hardware UART directly instead of relying on the driver
+    Serial1.begin(baudRate, SERIAL_8N2, _rxPin, _txPin);
+    delay(100); // Allow UART to stabilize
+    
+    Serial.println("DMX controller initialized successfully!");
+    Serial.print("DMX using pins - TX: ");
+    Serial.print(_txPin);
+    Serial.print(", RX: ");
+    Serial.print(_rxPin);
+    Serial.print(", DIR: ");
+    Serial.println(_dirPin);
+    
+    // Flag as initialized even if the driver failed, since we'll use direct UART
+    _isInitialized = true;
+    return _isInitialized;
 }
 
 // Initialize fixtures array with the given configuration

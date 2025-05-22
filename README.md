@@ -1,15 +1,50 @@
-# DMX LoRa Control System
+# LoRa-DMX Modular LoRaWAN DMX Controller
 
-This project implements a DMX lighting controller using a Heltec LoRa 32 V3 microcontroller that receives control commands over The Things Network (TTN) via LoRaWAN. It allows remote control of DMX lighting fixtures through JSON-formatted messages.
+## Overview
+This project is a modular DMX lighting controller for ESP32 (and future chipsets) using LoRaWAN for remote control. It supports true Class C operation for continuous reception, always-on mode, and is designed for easy extension to other hardware.
 
 ## Features
+- LoRaWAN (OTAA) with modular LoRaWANManager
+- **True Class C support** with MCCI LMIC
+- DMX output for lighting fixtures
+- JSON-based command/control (see below)
+- Pin configuration in `config.h`, keys in `secrets.h`
+- Designed for future chipset support (e.g., RakWireless)
 
-- Connects to The Things Network (TTN) using LoRaWAN (US915 frequency plan)
-- Uses OTAA (Over-The-Air Activation) for secure network joining
-- Receives JSON-formatted commands for controlling DMX fixtures
-- Processes JSON payloads to control multiple DMX fixtures at different addresses
-- Includes comprehensive error handling and debugging features
-- Supports dynamic fixture configuration without hardcoded settings
+## Implementation Notes
+- We've transitioned from RadioLib to MCCI LMIC for true Class C support
+- The LoRaWANManager is a complete wrapper around MCCI LMIC
+- The implementation uses event-based architecture with LMIC callbacks
+- LoRaWAN credentials are stored in secrets.h
+- Pin definitions are in config.h with support for different boards
+
+## Setup
+1. Clone the repo and install PlatformIO.
+2. Install MCCI LMIC: `pio lib install "mcci-catena/MCCI LoRaWAN LMIC library@^4.1.1"`
+3. Edit `include/secrets.h` with your LoRaWAN keys (do NOT commit real keys).
+4. Edit `include/config.h` for your board's pinout if not using Heltec V3.
+5. Build and upload to your board.
+6. Send downlink JSON commands via your LoRaWAN network.
+
+## LoRaWAN Class C
+This project uses true Class C operation, which means:
+- The device is **continuously listening** for downlink messages
+- Very responsive to commands from the network server
+- **Not suitable for battery operation** due to constant radio reception
+- Ideal for mains-powered lighting controllers
+
+## Patterns & JSON
+See the project root README or `README.md` for supported JSON commands and patterns.
+
+## Tech Stack
+- ESP32 (Heltec LoRa 32 V3, others)
+- MCCI LMIC (LoRaWAN with Class C)
+- ArduinoJson
+- Custom LoRaWANManager (lib/LoRaWANManager)
+- PlatformIO
+
+---
+See `docs/architecture.md` and `docs/technical.md` for more details.
 
 ## Hardware Requirements
 
@@ -45,12 +80,12 @@ Don't forget to add a 120 ohm resistor between A and B at the end of the DMX lin
 ### Required Libraries
 
 This project uses the following libraries:
-- RadioLib (for LoRaWAN communication)
+- MCCI LMIC (for LoRaWAN communication)
 - ArduinoJson (for JSON parsing)
 - esp_dmx (for DMX control)
 
 Plus the custom libraries included in the project:
-- LoRaManager (a wrapper around RadioLib for easier LoRaWAN management)
+- LoRaManager (a wrapper around MCCI LMIC for easier LoRaWAN management)
 - DmxController (a wrapper around esp_dmx for easier DMX control)
 
 ### PlatformIO Configuration
