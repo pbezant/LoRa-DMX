@@ -1,48 +1,42 @@
-# LoRa-DMX Project: Refactoring Summary
+# LoRa-DMX Project: Refactoring & Troubleshooting Summary
 
-## Completed Changes
+## Completed Changes & Current State
 
-1. **Rebuilt LoRaWANManager Class**
-   - Implemented singleton pattern for global access via `getInstance()`
-   - Eliminated raw pointer management with static instance
-   - Improved memory usage by replacing string-based key storage with byte arrays
-   - Added comprehensive event notification system with callback support
+1.  **LoRaWAN Implementation Overhaul:**
+    *   **Abandoned MCCI LMIC:** After extensive troubleshooting (build errors, runtime crashes related to SX1262, Class C, and internal library issues like `radio.c`), the MCCI LMIC approach was abandoned for the Heltec WiFi LoRa 32 V3.
+    *   **Adopted Heltec LoRaWAN Library:** Switched to using `heltecautomation/Heltec ESP32 Dev-Boards` library.
+    *   **Created `HeltecLoRaWANWrapper`:** Developed a custom wrapper (`lib/HeltecLoRaWANWrapper/Heltec_LoRaWAN_Wrapper.h`) to simplify using the Heltec library for Class C LoRaWAN operations, including downlink and connection status callbacks.
+    *   **Integrated Wrapper into `main.cpp`:** Refactored `src/main.cpp` to use the new wrapper, manage connection state, and handle uplinks/downlinks.
+    *   **Credential Management:** LoRaWAN credentials (DevEUI, AppEUI, AppKey) are sourced from `include/secrets.h` by the wrapper.
+    *   **PlatformIO Configuration for Heltec Library:** Successfully identified and applied necessary build flags (`-DHELTEC_BOARD=30`, `-DSLOW_CLK_TPYE=1`, `-DWIFI_LORA_32_V3`) in `platformio.ini` to ensure the Heltec library initializes correctly for the board and radio.
+    *   Removed all MCCI LMIC related files and configurations (e.g., `lmic_project_config.h`, old `LoRaWANManager`).
 
-2. **Enhanced Error Handling**
-   - Added watchdog timer resets at critical initialization points
-   - Improved error detection and reporting throughout the codebase
-   - Added error event notifications for join and transmission failures
+2.  **DMX Integration (Ongoing Troubleshooting):**
+    *   The project uses `someweisguy/esp_dmx` library for DMX control, wrapped by `DmxController`.
+    *   Currently facing compilation errors within `esp_dmx` (e.g., `ESP_INTR_FLAG_IRAM undefined`, `timer_group_t undefined`).
+    *   **Root Cause Identified:** These errors are due to an ESP-IDF version mismatch. The current `esp_dmx @ ^4.1.0` expects ESP-IDF v5.x APIs, but the project's Arduino core (`framework-arduinoespressif32 @ 3.20017...`) is based on ESP-IDF v4.4.7.
 
-3. **Technical Improvements**  
-   - Better SX1262 radio initialization and pin management
-   - Fixed channel setup for US915 and AU915 regions
-   - Improved Class C continuous reception configuration
-   - More reliable OTAA join procedure
+## Pending Issues & Next Steps
 
-4. **Configuration Updates**
-   - Updated LMIC project configuration for better compatibility
-   - Synchronized configuration between src and include directories
-   - Added improved debugging capabilities
+1.  **Resolve DMX Library Compilation Errors:**
+    *   **Current Strategy:** Attempting to use an older, compatible version of `someweisguy/esp_dmx`. The `platformio.ini` was just updated to try `someweisguy/esp_dmx @ 2.0.2` (previously tried `^4.1.0` which caused errors, and `~2.0.2` which PlatformIO couldn't find).
+    *   **Next Action:** Re-compile the project with `esp_dmx @ 2.0.2` to see if this resolves the ESP-IDF API mismatch errors.
+    *   **Alternative if `2.0.2` fails or is too old:** Systematically try other versions of `esp_dmx` that predate explicit ESP-IDF v5.x support, or explore upgrading the entire project environment to use Arduino Core v3.x (based on ESP-IDF v5.x), though this is a more significant change.
 
-## Pending Issues
+2.  **Code Cleanup & Verification:**
+    *   Review `platformio.ini` for any other potentially problematic or redundant library entries (e.g., the `ESP32 DMX` line was just removed).
+    *   Once DMX compilation is successful, ensure DMX functionality (`DmxController` and its usage in `main.cpp`) is still correct and compatible with the chosen `esp_dmx` library version.
 
-1. **Linter Errors to Fix**:
-   - `LoRaWANManager.cpp`: Duplicate case value for `EV_JOIN_FAILED`
-   - `main.cpp`: 'downlinkCounter' not declared in scope (line 931)
-   - `main.cpp`: 'response' not declared in scope (line 1579)
-   - `lmic_project_config.h`: 'LMIC_setupClassC' not declared in scope (needs #ifdef)
+3.  **Testing Requirements (after compilation successes):**
+    *   Thoroughly test LoRaWAN Class C join, uplink, and downlink with the Heltec wrapper.
+    *   Verify DMX output control is functional.
+    *   Test combined operation: receiving DMX commands via LoRaWAN and outputting them.
 
-2. **Testing Requirements**:
-   - Complete hardware testing with actual SX1262 radio
-   - Verify join process and transmission reliability
-   - Confirm proper Class C operation for downlink reception
-
-3. **Next Steps**:
-   - Fix remaining linter errors
-   - Implement more robust error recovery for radio failures
-   - Enhance documentation with usage examples
-   - Consider adding power saving features for battery operation
+4.  **Future Enhancements (Post-Core Functionality):**
+    *   Implement more robust error recovery for LoRa and DMX.
+    *   Enhance documentation with full setup and usage examples.
+    *   Consider power-saving features if battery operation becomes a requirement.
 
 ## Implementation Notes
 
-The new implementation follows modern C++ practices including the singleton pattern, proper memory management, and event-driven architecture. This should significantly improve stability on ESP32 with SX1262 radios by addressing the watchdog timeout issues that were occurring during initialization and operation. 
+The project has pivoted significantly in its LoRaWAN strategy. The focus is now on the Heltec native libraries for stability on their hardware. The immediate critical path is resolving the DMX library compatibility to achieve a clean build, then proceeding to functional testing. 
