@@ -1,0 +1,21 @@
+{
+    "name": "McciLmicWrapper",
+    "version": "0.1.0",
+    "description": "A wrapper for the MCCI LoRaWAN LMIC library to simplify its usage and add specific features like Class C.",
+    "keywords": "lorawan, lmic, mcci, class c, esp32, heltec",
+    "authors": [
+        {
+            "name": "Your Name/Big Daddy",
+            "email": "your_email@example.com",
+            "maintainer": true
+        }
+    ],
+    "frameworks": "arduino",
+    "platforms": "espressif32",
+    "dependencies": [
+        {
+            "name": "MCCI LoRaWAN LMIC library",
+            "version": "^4.1.1" 
+        }
+    ]
+} 
