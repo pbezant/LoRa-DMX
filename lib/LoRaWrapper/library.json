@@ -1,0 +1,22 @@
+{
+    "name": "LoRaWrapper",
+    "version": "1.0.0",
+    "description": "A wrapper library for Heltec LoRaWAN functionality",
+    "keywords": "lora, lorawan, heltec",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/yourusername/LoRa-DMX"
+    },
+    "authors": [
+        {
+            "name": "Preston Bezant",
+            "maintainer": true
+        }
+    ],
+    "license": "MIT",
+    "dependencies": {
+        "heltec-esp32-dev-boards": "^2.1.4"
+    },
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+} 

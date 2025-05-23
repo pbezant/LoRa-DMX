@@ -26,11 +26,11 @@ This project implements an embedded DMX lighting controller. The system's core i
 *   **Interfaces/APIs Exposed:** Consumes raw payload data from the LoRaWAN module. Outputs structured DMX control information to the DMX Control Module.
 *   **Dependencies:** `ArduinoJson` library.
 
-### 4. DMX Control Module (DmxController & esp_dmx)
-*   **Responsibilities:** Takes structured DMX control information (addresses, channel values). Manages the DMX bus timing and sends DMX signals to connected fixtures via a MAX485 transceiver.
-*   **Key Technologies:** `esp_dmx` library, custom `DmxController` wrapper, MAX485.
-*   **Interfaces/APIs Exposed:** Provides an API to the main application/command processing module to set DMX channel values (e.g., `dmx.setChannel(address, value)` or `dmx.updateFixtures(jsonData)`).
-*   **Dependencies:** `esp_dmx` library, MAX485 hardware interface (GPIO pins for TX, DE/RE).
+### 4. DMX Control Module (Custom DmxController)
+*   **Responsibilities:** Takes structured DMX control information (addresses, channel values). Manages the DMX bus timing and sends DMX signals to connected fixtures via a MAX485 transceiver using a custom UART-based implementation.
+*   **Key Technologies:** Custom UART-based DMX implementation, `DmxController` wrapper class, MAX485, FreeRTOS tasks for timing.
+*   **Interfaces/APIs Exposed:** Provides an API to the main application/command processing module to set DMX channel values (e.g., `dmx.setChannel(address, value)`, `dmx.setFixtureChannels(startChannel, fixture)`, `dmx.update()`).
+*   **Dependencies:** ESP32S3 HardwareSerial (UART), FreeRTOS task management, MAX485 hardware interface (GPIO pins for TX, RX, DE/RE), custom DMX timing implementation.
 
 ### 5. The Things Network (TTN)
 *   **Responsibilities:** Provides the LoRaWAN network server infrastructure. Routes messages to/from the end device. Allows for payload formatting and integration with other services (not detailed in README).
@@ -45,12 +45,13 @@ This project implements an embedded DMX lighting controller. The system's core i
 5.  **Payload Extraction:** The main application retrieves the payload from `LoRaManager`.
 6.  **JSON Parsing:** `ArduinoJson` parses the payload if it's in JSON format.
 7.  **Logic Execution:** The application logic interprets the parsed command (e.g., identify target DMX addresses and channel values).
-8.  **DMX Output:** The `DmxController`/`esp_dmx` library is instructed to update the DMX universe with the new channel values.
+8.  **DMX Output:** The custom `DmxController` implementation is instructed to update the DMX universe with the new channel values.
 9.  **Signal Transmission:** The MAX485 transceiver converts the microcontroller's logic-level signals to DMX-standard RS-485 signals, which are sent to the DMX fixtures.
 
 ## Key Architectural Decisions
 
-*   **Use of Existing Libraries:** Leveraging well-tested libraries like `RadioLib`, `ArduinoJson`, and `esp_dmx` accelerates development and ensures robust handling of complex protocols.
-*   **Custom Wrappers (`LoRaManager`, `DmxController`):** These likely simplify the main application code by providing a higher-level, project-specific API over the more generic libraries. This improves readability and maintainability.
+*   **Use of Existing Libraries:** Leveraging well-tested libraries like `RadioLib` and `ArduinoJson` accelerates development and ensures robust handling of complex protocols.
+*   **Custom Wrappers (`LoRaManager`, `DmxController`):** These simplify the main application code by providing a higher-level, project-specific API. The `DmxController` implements custom UART-based DMX512 communication optimized for ESP32S3, while `LoRaManager` abstracts LoRaWAN complexity. This improves readability and maintainability.
+*   **Custom DMX Implementation:** Due to ESP32S3 compatibility issues with existing DMX libraries, a custom UART-based DMX512 implementation was developed that uses FreeRTOS tasks and precise timing control for reliable DMX signal generation.
 *   **Reliance on TTN for Network Infrastructure:** Offloads the complexity of managing a LoRaWAN network server to a public/community service (or private TTN instance).
 *   **JSON as Flexible Command Language:** Allows for complex and extensible commands without needing to redefine a binary protocol for every new feature. 

@@ -68,24 +68,19 @@
  * }
  * 
  * Libraries:
- * - LoRaManager: Custom LoRaWAN communication via RadioLib
+ * - LoRaWrapper: Custom LoRaWAN communication wrapper for Heltec
  * - ArduinoJson: JSON parsing
  * - DmxController: DMX output control
  */
 
 #include <Arduino.h>
-#include <ArduinoJson.h>
-#include <SPI.h>  // Include SPI library explicitly
 #include <vector>
-#include "LoRaManager.h" // This is for the original LoRa implementation
+#include "LoRaWan_APP.h"
+#include "driver/board.h"
+#include <ArduinoJson.h>
 #include "DmxController.h"
 #include <esp_task_wdt.h>  // Watchdog
-#include "secrets.h"  // Include the secrets.h file for LoRaWAN credentials
-
-// Includes for LoRaWrapper
-#include "heltec_board_config.h"  // MUST be included before Heltec headers
-#include "ILoRaWanDevice.h"
-#include "HeltecLoRaWan.h"
+#include "secrets.h"  // LoRaWAN credentials
 
 // Debug output
 #define SERIAL_BAUD 115200
@@ -93,47 +88,34 @@
 // Diagnostic LED pin
 #define LED_PIN 35  // Built-in LED on Heltec LoRa 32 V3
 
-// Global LoRaWAN device instance - declared early for visibility in all functions
-ILoRaWanDevice* loraDevice = nullptr;
+// LoRaWAN parameters
+uint8_t devEui[] = { 0x90, 0xcf, 0xf8, 0x68, 0xef, 0x8b, 0xd4, 0xcc };
+uint8_t appEui[] = { 0xED, 0x73, 0x32, 0x20, 0xD2, 0xA9, 0xF1, 0x33 };
+uint8_t appKey[] = { 0xf7, 0xed, 0xcf, 0xe4, 0x61, 0x7e, 0x66, 0x70, 
+                     0x16, 0x65, 0xa1, 0x3a, 0x2b, 0x76, 0xdd, 0x52 };
+
+// Application port and data
+uint8_t appPort = 2;
+uint8_t appData[LORAWAN_APP_DATA_MAX_SIZE];
+uint8_t appDataSize = 0;
+
+// LoRaWAN settings
+bool overTheAirActivation = true;
+bool loraWanAdr = true;
+bool isTxConfirmed = true;
+uint32_t appTxDutyCycle = 15000;
+DeviceClass_t loraWanClass = CLASS_C;
+LoRaMacRegion_t loraWanRegion = LORAMAC_REGION_US915;
+uint8_t confirmedNbTrials = 8;
+
+// Channel mask for US915 sub-band 2 (channels 8-15 + 65)
+uint16_t userChannelsMask[6] = { 0x00FF, 0x0000, 0x0000, 0x0000, 0x0002, 0x0000 };
 
 // DMX configuration for Heltec LoRa 32 V3
 #define DMX_PORT 1
 #define DMX_TX_PIN 19  // TX pin for DMX
 #define DMX_RX_PIN 20  // RX pin for DMX
 #define DMX_DIR_PIN 5  // DIR pin for DMX (connect to both DE and RE on MAX485)
-
-// LoRaWAN TTN Connection Parameters (Potentially for LoRaManager, may not be used by LoRaWrapper)
-#define LORA_CS_PIN   8     // Corrected CS pin for Heltec LoRa 32 V3
-#define LORA_DIO1_PIN 14    // DIO1 pin
-#define LORA_RESET_PIN 12   // Reset pin  
-#define LORA_BUSY_PIN 13    // Busy pin
-
-// SPI pins for Heltec LoRa 32 V3 (Potentially for LoRaManager)
-#define LORA_SPI_SCK  9   // SPI clock
-#define LORA_SPI_MISO 11  // SPI MISO
-#define LORA_SPI_MOSI 10  // SPI MOSI
-
-// LoRaWAN Credentials from secrets.h (used by LoRaManager)
-uint64_t joinEUI_orig = 0; // Renamed to avoid conflict if LoRaWrapper uses a similar name
-uint64_t devEUI_orig = 0;  // Renamed to avoid conflict
-
-// Function to convert hex string to uint64_t for the EUIs (used by LoRaManager)
-uint64_t hexStringToUint64(const char* hexStr) {
-  uint64_t result = 0;
-  for (int i = 0; i < 16 && hexStr[i] != '\0'; i++) {
-    char c = hexStr[i];
-    uint8_t nibble = 0;
-    if (c >= '0' && c <= '9') {
-      nibble = c - '0';
-    } else if (c >= 'A' && c <= 'F') {
-      nibble = c - 'A' + 10;
-    } else if (c >= 'a' && c <= 'f') {
-      nibble = c - 'a' + 10;
-    }
-    result = (result << 4) | nibble;
-  }
-  return result;
-}
 
 // DMX configuration
 #define MAX_FIXTURES 32
@@ -142,23 +124,19 @@ uint64_t hexStringToUint64(const char* hexStr) {
 
 // Global variables for DMX application
 bool dmxInitialized = false;
-// bool loraInitialized = false; // This might be managed by LoRaWrapper now
 DmxController* dmx = NULL;
-LoRaManager* lora = NULL; // This is for the original LoRa implementation. Consider if it should be replaced by loraDevice
-
 SemaphoreHandle_t dmxMutex = NULL;
 TaskHandle_t dmxTaskHandle = NULL;
 bool keepDmxDuringRx = true;
 
 // Forward declarations for DMX application
-void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port); // This is likely for LoRaManager
+void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port);
 bool processLightsJson(JsonArray lightsArray);
 void processMessageQueue(); 
 
 uint8_t receivedData[MAX_JSON_SIZE];
 size_t receivedDataSize = 0;
 uint8_t receivedPort = 0;
-// bool dataReceived = false; // Replaced by direct callback processing
 
 bool runningRainbowDemo = false;
 unsigned long lastRainbowStep = 0;
@@ -167,11 +145,24 @@ int rainbowStepDelay = 30;
 bool rainbowStaggered = true;
 
 unsigned long lastHeartbeat = 0;
-// unsigned long lastStatusUpdate = 0; // Not used
 
-// bool processInCallback = true; // Not used in this structure
+#define WDT_TIMEOUT 30 // Reverted from 120 back to 30 seconds - sync word issue fixed
 
-#define WDT_TIMEOUT 30
+// Downlink data handler
+void downLinkDataHandle(McpsIndication_t *mcpsIndication) {
+    Serial.printf("Received data on port %d\n", mcpsIndication->Port);
+    
+    if (mcpsIndication->BufferSize > 0) {
+        // Create a null-terminated string from the received data
+        char jsonString[MAX_JSON_SIZE + 1];
+        size_t copySize = min((size_t)mcpsIndication->BufferSize, (size_t)MAX_JSON_SIZE);
+        memcpy(jsonString, mcpsIndication->Buffer, copySize);
+        jsonString[copySize] = '\0';
+        
+        // Process the JSON payload
+        processJsonPayload(jsonString);
+    }
+}
 
 void printDmxValues(int startAddr, int numChannels) {
   if (!dmxInitialized || dmx == NULL) {
@@ -418,10 +409,10 @@ void onTransmissionComplete(bool success, int errorCode) {
 }
 
 void processMessageQueue() { // For LoRaManager
-    if (!isConnected || messageQueue.empty() || !lora) return;
+    if (!isConnected || messageQueue.empty() || !loraDevice) return;
     std::sort(messageQueue.begin(), messageQueue.end(), [](const PendingMessage& a, const PendingMessage& b) { return a.priority < b.priority; });
     const PendingMessage& msg = messageQueue.front();
-    if (lora->sendString(msg.payload, msg.port, msg.confirmed)) messageQueue.erase(messageQueue.begin());
+    if (loraDevice->send((uint8_t*)msg.payload.c_str(), msg.payload.length(), msg.port, msg.confirmed)) messageQueue.erase(messageQueue.begin());
 }
 
 void queueMessage(const String& payload, uint8_t port, bool confirmed, uint8_t priority) { // For LoRaManager
@@ -509,11 +500,6 @@ bool processJsonPayload(const String& jsonString) {
     } else if (pattern == "ping") {
       Serial.println("=== PING RECEIVED ==="); Serial.println("Downlink communication is working!");
       for (int i = 0; i < 3; i++) { DmxController::blinkLED(LED_PIN, 3, 100); delay(500); }
-      // Ping response via LoRaWrapper - temporarily disabled due to scope issues
-      // if (::loraDevice && ::loraDevice->isJoined()) { 
-      //   String response = "{\"ping_response\":\"ok\"}";
-      //   Serial.printf("LoRaWrapper: Would send ping response here: %s\n", response.c_str());
-      // }
       return true;
     } else { Serial.print("Unknown test pattern: "); Serial.println(pattern); return false; }
   }
@@ -651,255 +637,141 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
         if (dmxInitialized) {
             if (processJsonPayload(payloadStr)) {
                 Serial.println("LoRaManager: Successfully processed downlink"); DmxController::blinkLED(LED_PIN, 2, 200);
-                // Ping response via LoRaWrapper - temporarily disabled due to scope issues
-                // if (::loraDevice && ::loraDevice->isJoined()) { 
-                //     String response = "{\"ping_response\":\"ok\",\"counter\":" + String(downlinkCounter) + "}";
-                //     Serial.printf("LoRaWrapper: Would send ping response from callback here: %s\n", response.c_str());
-                // }
             } else { Serial.println("LoRaManager: Failed to process downlink"); DmxController::blinkLED(LED_PIN, 5, 100); }
         } else Serial.println("LoRaManager ERROR: DMX not initialized");
     }
-    // Backward compatibility buffer - consider removing if LoRaWrapper is primary
-    // memcpy(receivedData, payload, size); receivedDataSize = size; receivedPort = port; // dataReceived = false; 
   } else Serial.println("LoRaManager ERROR: Received payload exceeds buffer size");
   Serial.print("LoRaManager: Free heap after downlink: "); Serial.println(ESP.getFreeHeap());
   Serial.println("==== LoRaManager: DEBUG: EXITING DOWNLINK CALLBACK ====");
 }
 
-
 void dmxTask(void * parameter) {
-  vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
-  Serial.println("DMX task started on Core 0");
-  TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequency = pdMS_TO_TICKS(20); // 20ms -> 50Hz
-  while(true) {
-    if (dmxInitialized && dmx != NULL) {
-      if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
-        dmx->sendData();
-        xSemaphoreGive(dmxMutex);
-      }
+    vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
+    Serial.println("DMX task started on Core 0");
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xFrequency = pdMS_TO_TICKS(20); // 20ms -> 50Hz
+    while(true) {
+        if (dmxInitialized && dmx != NULL) {
+            if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+                dmx->sendData();
+                xSemaphoreGive(dmxMutex);
+            }
+        }
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
-    vTaskDelayUntil(&xLastWakeTime, xFrequency);
-  }
 }
 
-// This is the LoRaWAN initialization for LoRaManager
-bool loraInitialized = false; // Moved here, was global. For LoRaManager.
-void initializeLoRaWAN_Manager() { 
-  joinEUI_orig = hexStringToUint64(APPEUI); // Use renamed globals
-  devEUI_orig = hexStringToUint64(DEVEUI);  // Use renamed globals
-
-  Serial.println("LoRaManager: Initializing with credentials from secrets.h:");
-  Serial.print("LoRaManager: Join EUI: "); Serial.println(APPEUI);
-  Serial.print("LoRaManager: Device EUI: "); Serial.println(DEVEUI);
-  Serial.print("LoRaManager: App Key: "); Serial.println(APPKEY);
-  
-  if (!lora->begin(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RESET_PIN, LORA_BUSY_PIN)) { // LoRaManager specific pins
-    Serial.println("LoRaManager: LoRa initialization failed!"); return;
-  }
-  
-  // For LoRaManager, NWKKEY might be part of AppKey or a separate define
-  const char* nwkKeyToUse = NWKKEY; // Assuming NWKKEY is defined in secrets.h, might be same as APPKEY for LoRaWAN 1.0.x
-  if (!lora->setCredentialsHex(joinEUI_orig, devEUI_orig, APPKEY, nwkKeyToUse)) {
-    Serial.println("LoRaManager: Failed to set credentials!"); return;
-  }
-  
-  lora->setDownlinkCallback(handleDownlinkCallback); // For LoRaManager
-  
-  Serial.println("LoRaManager: Attempting to join LoRaWAN network...");
-  if (lora->joinNetwork()) {
-    Serial.println("LoRaManager: Successfully joined the network!"); isConnected = true; // For LoRaManager
-    Serial.println("LoRaManager: Switching to Class C mode...");
-    if (lora->setDeviceClass(DEVICE_CLASS_C)) Serial.println("LoRaManager: Successfully switched to Class C!");
-    else Serial.println("LoRaManager: Failed to switch to Class C, staying Class A");
-  } else {
-    Serial.println("LoRaManager: Failed to join network, will retry later"); lastConnectionAttempt = millis(); // For LoRaManager
-  }
-  loraInitialized = true; // For LoRaManager
-}
-
-
-// Helper function to convert LoRaWAN credential strings from secrets.h to byte arrays FOR LORAWWRAPPER
-void hexStringToByteArray_wrapper(const char* hexString, uint8_t* byteArray, int byteLen) { //Renamed
+// Helper function to convert hex string to byte array
+void hexStringToByteArray(const char* hexString, uint8_t* byteArray, int byteLen) {
     for (int i = 0; i < byteLen; i++) {
-        char byteChars[3] = {hexString[i * 2], hexString[i * 2 + 1], 0};
+        char byteChars[3] = {hexString[i*2], hexString[i*2+1], 0};
         byteArray[i] = strtol(byteChars, nullptr, 16);
     }
 }
 
-// Byte arrays for LoRaWAN credentials FOR LORAWWRAPPER
-uint8_t actual_dev_eui[8];
-uint8_t actual_app_eui[8];
-uint8_t actual_app_key[16];
-// uint8_t actual_nwk_key[16]; // If using LoRaWAN 1.1 and have a separate NWKKEY for LoRaWrapper
-
-// Callback handler for LoRaWrapper
-class MyAppLoRaCallbacks : public ILoRaWanCallbacks {
-public:
-    void onJoined() override {
-        Serial.println("LoRaWrapper: MyApp: LoRaWAN Joined successfully!");
-    }
-
-    void onJoinFailed() override {
-        Serial.println("LoRaWrapper: MyApp: LoRaWAN Join Failed. Check credentials, coverage, or antenna.");
-    }
-
-    void onDataReceived(const uint8_t* data, uint8_t len, uint8_t port, int16_t rssi, int8_t snr) override {
-        Serial.printf("LoRaWrapper: MyApp: Data Received! Port: %d, RSSI: %d, SNR: %d, Length: %d\n", port, rssi, snr, len);
-        Serial.print("LoRaWrapper: MyApp: Payload: ");
-        for (int i = 0; i < len; i++) Serial.printf("%02X ", data[i]);
-        Serial.println();
-        
-        // Here, you could call processJsonPayload or a similar function
-        // tailored for data received via LoRaWrapper
-        String payloadStr = "";
-        for(int i=0; i<len; i++) payloadStr += (char)data[i];
-        Serial.println("LoRaWrapper: Processing received payload string:");
-        Serial.println(payloadStr);
-        processJsonPayload(payloadStr); // Example: reuse existing JSON processor
-
-    }
-
-    void onSendConfirmed(bool success) override {
-        if (success) Serial.println("LoRaWrapper: MyApp: LoRaWAN Send sequence considered completed by the MAC.");
-        else Serial.println("LoRaWrapper: MyApp: LoRaWAN Send sequence failed at MAC layer (e.g., no channel available).");
-    }
-
-    void onMacCommand(uint8_t cmd, uint8_t* payload, uint8_t len) override {
-        Serial.printf("LoRaWrapper: MyApp: MAC Command Received: CMD=0x%02X, Length=%d\n", cmd, len);
-    }
-};
-MyAppLoRaCallbacks myCallbacks; // Instance for LoRaWrapper
-
-
-void setup() { // This is the MAIN setup function
+void setup() {
     Serial.begin(SERIAL_BAUD);
     delay(3000); // Wait for serial
     Serial.println("\n\n===================================");
-    Serial.println("LoRa-DMX Controller - Main App Starting Up");
+    Serial.println("LoRa-DMX Controller - LoRaWrapper Implementation");
     Serial.println("===================================");
 
-    pinMode(LED_PIN, OUTPUT); digitalWrite(LED_PIN, LOW);
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
 
-    dmx = new DmxController(DMX_PORT, DMX_TX_PIN, DMX_RX_PIN, DMX_DIR_PIN);
-    dmx->begin();
+    // Initialize DMX
+    dmx = new DmxController();
+    dmx->begin(DMX_TX_PIN, DMX_RX_PIN, DMX_DIR_PIN);
     dmxInitialized = true;
 
     dmxMutex = xSemaphoreCreateMutex();
-    if (dmxMutex == NULL) { Serial.println("Failed to create DMX mutex!"); return; }
+    if (dmxMutex == NULL) {
+        Serial.println("Failed to create DMX mutex!");
+        return;
+    }
 
-    // Option 1: Initialize original LoRaManager (if still needed)
-    // lora = new LoRaManager();
-    // initializeLoRaWAN_Manager(); 
+    // Initialize LoRaWAN
+    Serial.println("LoRaWrapper: Initializing LoRaWAN...");
 
-    // Option 2: Initialize LoRaWrapper (Preferred for new development)
-    Serial.println("LoRaWrapper: Initializing MCU and LoRaWAN hardware...");
-    Mcu.begin(HELTEC_BOARD, SLOW_CLK_TPYE); // CRITICAL for Heltec boards
+    // Convert credentials from strings to byte arrays
+    uint8_t actual_dev_eui[8];
+    uint8_t actual_app_eui[8];
+    uint8_t actual_app_key[16];
+    uint8_t actual_nwk_key[16];
 
-    hexStringToByteArray_wrapper(DEVEUI, actual_dev_eui, 8);
-    hexStringToByteArray_wrapper(APPEUI, actual_app_eui, 8);
-    hexStringToByteArray_wrapper(APPKEY, actual_app_key, 16);
-    // if NWKKEY is separate for LoRaWAN 1.1.x: hexStringToByteArray_wrapper(NWKKEY, actual_nwk_key, 16);
-    
-    Serial.println("LoRaWrapper: Creating LoRaWAN device instance...");
+    hexStringToByteArray(DEVEUI, actual_dev_eui, 8);
+    hexStringToByteArray(APPEUI, actual_app_eui, 8);
+    hexStringToByteArray(APPKEY, actual_app_key, 16);
+    hexStringToByteArray(NWKKEY, actual_nwk_key, 16);
+
+    // Initialize Heltec board
+    Mcu.begin(30, 0);  // 30 = WIFI_LORA_32_V3, 0 = no external 32K crystal
+
+    // Create and configure LoRaWAN device
     loraDevice = new HeltecLoRaWan();
-
-    Serial.println("LoRaWrapper: Configuring parameters...");
     loraDevice->setDevEui(actual_dev_eui);
     loraDevice->setAppEui(actual_app_eui);
     loraDevice->setAppKey(actual_app_key);
-    // if NwkKey: loraDevice->setNwkKey(actual_nwk_key);
-    
-    loraDevice->setActivationType(true); // OTAA
-    loraDevice->setAdr(true);            // ADR
-    
-    LoRaMacRegion_t region = LORAMAC_REGION_US915; // Customize
-    DeviceClass_t devClass = CLASS_C;            // Customize
+    loraDevice->setNwkKey(actual_nwk_key);
+    loraDevice->setActivationType(true); // true for OTAA
+    loraDevice->setAdr(true);
 
-    Serial.printf("LoRaWrapper: Initializing for Region: %d, Class: %s\n", region, (devClass == CLASS_A ? "A" : "C"));
-    if (loraDevice->init(devClass, region, &myCallbacks)) {
-        Serial.println("LoRaWAN device interface initialized.");
-        Serial.println("Attempting to join the LoRaWAN network (OTAA)...");
+    // Initialize for Class C operation in US915 region
+    if (loraDevice->init(CLASS_C, LORAMAC_REGION_US915, &loraCallbacks)) {
+        Serial.println("LoRaWrapper: Device initialized successfully");
+        loraWanInitialized = true;
         loraDevice->join();
     } else {
-        Serial.println("FATAL: LoRaWAN device interface initialization failed. Halting.");
-        while (1) { delay(1000); }
+        Serial.println("LoRaWrapper: Device initialization failed!");
+        while(1) {
+            digitalWrite(LED_PIN, HIGH);
+            delay(100);
+            digitalWrite(LED_PIN, LOW);
+            delay(100);
+        }
     }
 
-
+    // Create DMX task
     xTaskCreatePinnedToCore(dmxTask, "DMX Task", 4096, NULL, 1, &dmxTaskHandle, 0);
     
+    // Initialize watchdog
     esp_task_wdt_init(WDT_TIMEOUT, true);
     esp_task_wdt_add(NULL);
 
     Serial.println("Main setup complete.");
 }
 
-unsigned long lastSendMillis_wrapper = 0; // For LoRaWrapper example send
-const unsigned long sendIntervalMillis_wrapper = 60000; // For LoRaWrapper
-uint8_t uplinkCounter_wrapper = 0; // For LoRaWrapper
+void loop() {
+    esp_task_wdt_reset();
 
-void loop() { // This is the MAIN loop function
-  esp_task_wdt_reset();
+    // Process LoRaWAN stack
+    if (loraWanInitialized && loraDevice != nullptr) {
+        loraDevice->process();
 
-  // Process LoRaWrapper
-  if (loraDevice) {
-      loraDevice->process(); 
-  }
-
-  // Process original LoRaManager (if used)
-  // if (loraInitialized && lora != NULL) {
-  //   lora->handleEvents();
-  //   if (!isConnected && millis() - lastConnectionAttempt >= CONNECTION_RETRY_INTERVAL) {
-  //       lastConnectionAttempt = millis(); Serial.println("LoRaManager: Reconnecting...");
-  //       if (lora->joinNetwork()) { isConnected = true; Serial.println("LoRaManager: Reconnected!");
-  //           if (lora->setDeviceClass(DEVICE_CLASS_C)) Serial.println("LoRaManager: Class C re-set.");
-  //           else Serial.println("LoRaManager: Failed to re-set Class C.");
-  //       }
-  //   }
-  //   if (isConnected && lora->getDeviceClass() != DEVICE_CLASS_C) { /* try to set class C */ }
-  //   processMessageQueue(); // For LoRaManager
-  // }
-
-  // Heartbeat via LoRaManager (if used)
-  // if (millis() - lastHeartbeat >= 60000) {
-  //   lastHeartbeat = millis();
-  //   if (loraInitialized && lora != NULL) {
-  //       char currentDevClass = lora->getDeviceClass();
-  //       String message = "{\"hb\":1,\"class\":\"" + String(currentDevClass) + "\"}\"";
-  //       queueMessage(message, 1, true, 200); // For LoRaManager
-  //   }
-  // }
-
-  // Example: Periodically send an uplink message via LoRaWrapper if joined
-    if (loraDevice && loraDevice->isJoined()) {
-        if (millis() - lastSendMillis_wrapper >= sendIntervalMillis_wrapper) {
-            uplinkCounter_wrapper++;
-            char payload_wrapper[32];
-            snprintf(payload_wrapper, sizeof(payload_wrapper), "Hello DMX (Wrapper) #%d", uplinkCounter_wrapper);
-            
-            Serial.printf("LoRaWrapper: Sending uplink: %s\n", payload_wrapper);
-            bool sendInitiated = loraDevice->send((uint8_t*)payload_wrapper, strlen(payload_wrapper), 1, false);
-            
-            if (sendInitiated) Serial.println("LoRaWrapper: Uplink send request initiated.");
-            else Serial.println("Failed to initiate uplink send (Example) (e.g., busy, not joined).");
-            lastSendMillis_wrapper = millis();
+        // Send heartbeat if joined
+        if (loraDevice->isJoined() && millis() - lastHeartbeat >= 60000) {
+            lastHeartbeat = millis();
+            String heartbeat = "{\"heartbeat\":1,\"uptime\":" + String(millis()) + "}";
+            Serial.println("LoRaWrapper: Sending heartbeat: " + heartbeat);
+            loraDevice->send((uint8_t*)heartbeat.c_str(), heartbeat.length(), 1, false);
         }
     }
 
-
-  if (runningRainbowDemo && dmxInitialized && dmx != NULL) {
-    if (millis() - lastRainbowStep >= rainbowStepDelay) {
-      lastRainbowStep = millis();
-      if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
-        dmx->updateRainbowStep(rainbowStepCounter++, rainbowStaggered);
-        xSemaphoreGive(dmxMutex);
-      }
+    // Process DMX patterns
+    if (runningRainbowDemo && dmxInitialized && dmx != NULL) {
+        if (millis() - lastRainbowStep >= rainbowStepDelay) {
+            lastRainbowStep = millis();
+            if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+                dmx->updateRainbowStep(rainbowStepCounter++, rainbowStaggered);
+                xSemaphoreGive(dmxMutex);
+            }
+        }
     }
-  }
-  
-  if (patternHandler.isActive()) patternHandler.update();
-  
-  delay(10); // Cooperative delay
+    
+    if (patternHandler.isActive()) {
+        patternHandler.update();
+    }
+    
+    delay(10); // Cooperative delay
 }
 

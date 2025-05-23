@@ -12,17 +12,21 @@ This document details technical specifications for various aspects of the projec
 
 ### Pattern A: Wrapper Libraries for Hardware Abstraction
 
-*   **Description:** Custom libraries (`LoRaManager`, `DmxController` mentioned in README) are used to simplify interaction with underlying hardware/communication libraries (`RadioLib`, `esp_dmx`). This provides a cleaner API for the main application logic and encapsulates hardware-specific details.
+*   **Description:** Custom libraries (`LoRaWrapper`, `DmxController`) are used to simplify interaction with underlying hardware/communication libraries. The `LoRaWrapper` provides an abstract interface (`ILoRaWanDevice`) with concrete implementations like `HeltecLoRaWan`. The `DmxController` implements a custom UART-based DMX512 protocol optimized for ESP32S3. This provides a cleaner API for the main application logic and encapsulates hardware-specific details.
 *   **When to Use:** When interacting with complex external libraries or hardware peripherals to provide a simplified and project-specific interface.
 *   **Example (or link to example code):**
     ```cpp
-    // Conceptual example based on README description
-    // LoRaManager lora;
-    // lora.joinNetwork(joinEUI, devEUI, appKey);
-    // if (lora.messageReceived()) { /* process message */ }
+    // LoRaWrapper usage with interface
+    ILoRaWanDevice* loraDevice = new HeltecLoRaWan();
+    loraDevice->init(CLASS_C, LORAMAC_REGION_US915, &callbacks);
+    loraDevice->join();
 
-    // DmxController dmx;
-    // dmx.setChannel(1, 255);
+    // DmxController usage with custom UART implementation
+    DmxController dmx;
+    dmx.begin(TX_PIN, RX_PIN, DIR_PIN, 2); // Serial port 2
+    dmx.setChannel(1, 255);
+    dmx.setFixtureChannels(1, fixtureData); // Multi-channel fixture
+    dmx.update(); // Send DMX frame
     ```
 
 ### Pattern B: JSON for Dynamic Configuration/Commands
@@ -41,144 +45,217 @@ This document details technical specifications for various aspects of the projec
 ## Security Considerations
 
 *   **LoRaWAN Security:** Relies on standard LoRaWAN security mechanisms (AES-128 encryption for network and application sessions).
-*   **Credential Management:** Store LoRaWAN credentials (DevEUI, AppEUI, AppKey) in a separate `secrets.h` file (which should be in `.gitignore`) and include it in your main application file. Convert string-based credentials from `secrets.h` to byte arrays as needed by the LoRaWAN library.
+*   **Credential Management:** 
+    - LoRaWAN credentials are stored in `include/secrets.h`:
+      ```cpp
+      // Device EUI (8 bytes)
+      #define DEVEUI "522b03a2a79b1d87"
+      
+      // Application EUI (8 bytes)
+      #define APPEUI "27ae8d0509c0aa88"
+      
+      // Application Key (16 bytes)
+      #define APPKEY "2d6fb7d54929b790c52e66758678fb2e"
+      
+      // Network Key (16 bytes, same as APPKEY for LoRaWAN 1.0.x)
+      #define NWKKEY "2d6fb7d54929b790c52e66758678fb2e"
+      ```
+    - The `secrets.h` file should be in `.gitignore` to prevent credential exposure
+    - Credentials are converted from hex strings to byte arrays during initialization
 *   **Input Sanitization:** (Assumed to be handled by `ArduinoJson` during parsing, but complex or malformed JSON could still be a concern. Further inspection of parsing logic in source code needed.)
 
 ## Performance Guidelines
 
-*   **Real-time DMX:** DMX requires consistent timing. `esp_dmx` library likely handles this at a low level.
-*   **LoRaWAN Duty Cycle:** Adherence to LoRaWAN regional duty cycle limitations is critical (managed by `RadioLib` and TTN).
+*   **Real-time DMX:** DMX requires consistent timing. Our custom UART-based implementation uses FreeRTOS tasks and precise timing control to ensure proper DMX512 break (100μs) and mark-after-break (12μs) timing requirements.
+*   **LoRaWAN Duty Cycle:** Adherence to LoRaWAN regional duty cycle limitations is critical (managed by `LoRaWrapper` and TTN).
 *   **JSON Parsing:** `ArduinoJson` is generally efficient, but very large/complex JSON payloads could impact performance or memory on the microcontroller. Payload size is also limited by LoRaWAN constraints.
 *   **Power Consumption:** For battery-powered applications (if any), deep sleep and minimizing radio transmission time are important. (Heltec LoRa 32 V3 has Wi-Fi/Bluetooth which should be disabled if not used to save power).
 
-## Using the LoRaWrapper for LoRaWAN Communication
+## Using the Heltec LoRaWAN Library
 
-The `LoRaWrapper` library provides a standardized interface for LoRaWAN communication, abstracting the specifics of the underlying LoRaWAN modem/library. The initial concrete implementation is `HeltecLoRaWan` for Heltec ESP32 based boards using their official `Heltec_ESP32` library.
+The project now uses the official Heltec LoRaWAN library directly for LoRaWAN communication, which provides native support for the Heltec LoRa 32 V3 board and its SX126x radio module.
 
 ### Integration Steps:
 
 1.  **Include Headers:**
-    In your `main.cpp` (or equivalent application file), include the necessary headers:
+    In your `main.cpp`, include the necessary Heltec headers:
     ```cpp
-    #include "LoRaWrapper/ILoRaWanDevice.h"
-    #include "LoRaWrapper/HeltecLoRaWan.h" // Or other future implementations
-    #include <Arduino.h> 
-    // Other project-specific includes
+    #include "Arduino.h"
+    #include "LoRaWan_APP.h"
+    #include "HT_SSD1306Wire.h"
     ```
 
-2.  **Implement `ILoRaWanCallbacks`:**
-    Create a class in your application that inherits from `ILoRaWanCallbacks` to handle LoRaWAN events.
+2.  **Define LoRaWAN Parameters:**
     ```cpp
-    class MyAppLoRaCallbacks : public ILoRaWanCallbacks {
-    public:
-        void onJoined() override {
-            Serial.println("MyApp: LoRaWAN Joined!");
-            // Application logic after join
-        }
-
-        void onJoinFailed() override {
-            Serial.println("MyApp: LoRaWAN Join Failed.");
-            // Application logic for join failure
-        }
-
-        void onDataReceived(const uint8_t* data, uint8_t len, uint8_t port, int16_t rssi, int8_t snr) override {
-            Serial.printf("MyApp: Data Received - Port: %d, RSSI: %d, SNR: %d, Len: %d\n", port, rssi, snr, len);
-            // Process received application data
-        }
-
-        void onSendConfirmed(bool success) override {
-            // Note: For HeltecLoRaWan (non-intrusive), 'success' for confirmed messages means the TX cycle completed,
-            // not necessarily that an ACK was received from the server.
-            Serial.printf("MyApp: LoRaWAN Send Confirmed/Completed: %s\n", success ? "true" : "false");
-        }
-
-        void onMacCommand(uint8_t cmd, uint8_t* payload, uint8_t len) override {
-            Serial.printf("MyApp: MAC Command Received: CMD=0x%02X, Length=%d\n", cmd, len);
-        }
-    };
+    // LoRaWAN parameters are defined in lora_globals.cpp
+    extern uint8_t devEui[];
+    extern uint8_t appEui[];
+    extern uint8_t appKey[];
+    extern uint8_t nwkSKey[];
+    extern uint8_t appSKey[];
+    extern uint32_t devAddr;
+    extern uint8_t loraWanClass;
+    extern bool overTheAirActivation;
+    extern LoRaMacRegion_t loraWanRegion;
     ```
 
-3.  **Instantiate and Configure in `setup()`:**
+3.  **Implement Callback Functions:**
     ```cpp
-    MyAppLoRaCallbacks myCallbacks;
-    ILoRaWanDevice* loraDevice;
-
-    // Define your LoRaWAN credentials (DevEUI, AppEUI, AppKey)
-    // const uint8_t DEV_EUI[] = { ... };
-    // const uint8_t APP_EUI[] = { ... };
-    // const uint8_t APP_KEY[] = { ... };
-    // Credentials are now typically managed in a separate secrets.h file
-    #include "secrets.h" // Ensure this file defines DEVEUI_BYTES, APPEUI_BYTES, APPKEY_BYTES
-
-    // Helper function to convert hex string from secrets.h to byte array
-    // Ensure this function is defined or adapt as necessary.
-    void hexStringToByteArray(const char* hexString, uint8_t* byteArray, int byteLen) {
-        for (int i = 0; i < byteLen; i++) {
-            char byteChars[3] = {hexString[i*2], hexString[i*2+1], 0};
-            byteArray[i] = strtol(byteChars, nullptr, 16);
+    // Join callback
+    void joinCallback(void) {
+        if (deviceState == DEVICE_STATE_JOIN_FAILED) {
+            Serial.println("LoRaWAN Join Failed!");
+            // Handle join failure
+        } else {
+            Serial.println("LoRaWAN Joined Successfully!");
+            // Proceed with application logic
         }
     }
 
-    uint8_t actual_dev_eui[8];
-    uint8_t actual_app_eui[8];
-    uint8_t actual_app_key[16];
+    // Receive callback
+    void downLinkDataHandle(McpsIndication_t *mcpsIndication) {
+        Serial.printf("Received LoRaWAN data on port %d\n", mcpsIndication->Port);
+        // Process received data
+        for (uint8_t i = 0; i < mcpsIndication->BufferSize; i++) {
+            Serial.printf("%02X", mcpsIndication->Buffer[i]);
+        }
+        Serial.println();
+    }
+    ```
 
+4.  **Initialize in `setup()`:**
+    ```cpp
     void setup() {
         Serial.begin(115200);
-        // ... other serial setup ...
-
-        // Convert hex string credentials from secrets.h to byte arrays
-        // Assumes DEVEUI, APPEUI, APPKEY are defined as strings in secrets.h
-        hexStringToByteArray(DEVEUI, actual_dev_eui, 8);
-        hexStringToByteArray(APPEUI, actual_app_eui, 8);
-        hexStringToByteArray(APPKEY, actual_app_key, 16);
-
-        // CRITICAL: Initialize board/MCU first (specific to Heltec boards)
-        Mcu.begin(); // Or relevant Mcu.begin(BOARD_TYPE, CLOCK_TYPE);
-
-        loraDevice = new HeltecLoRaWan(); // Instantiate the concrete implementation
-
-        // Set credentials and parameters
-        loraDevice->setDevEui(actual_dev_eui);
-        loraDevice->setAppEui(actual_app_eui);
-        loraDevice->setAppKey(actual_app_key);
-        loraDevice->setActivationType(true); // true for OTAA
-        loraDevice->setAdr(true); // Enable Adaptive Data Rate
         
-        // Example: Initialize for Class C, US915 region
-        // Adjust DeviceClass_t (CLASS_A, CLASS_C) and LoRaMacRegion_t as needed.
-        if (loraDevice->init(CLASS_C, LORAMAC_REGION_US915, &myCallbacks)) {
-            Serial.println("LoRaWAN device initialized. Attempting join...");
-            loraDevice->join();
-        } else {
-            Serial.println("FATAL: LoRaWAN device initialization failed.");
-            // Handle critical failure
-            while(1);
-        }
+        // Initialize Heltec hardware
+        Mcu.begin();
+        
+        // Initialize LoRaWAN device state
+        deviceState = DEVICE_STATE_INIT;
+        
+        // Start LoRaWAN join process
+        LoRaWAN.init(loraWanClass, loraWanRegion);
+        
+        // For debugging
+        Serial.printf("LoRaWAN Class: %d\n", loraWanClass);
+        Serial.printf("Region: %d\n", loraWanRegion);
     }
     ```
 
-4.  **Process in `loop()`:**
-    The `loraDevice->process()` method **must** be called continuously in the main application loop.
+5.  **Process in `loop()`:**
     ```cpp
     void loop() {
-        loraDevice->process(); // Drives the LoRaWAN stack and wrapper logic
-
-        // Application logic: e.g., send data periodically
-        if (loraDevice->isJoined()) {
-            // Example: send unconfirmed data on port 1
-            // uint8_t myPayload[] = "Hello";
-            // loraDevice->send(myPayload, sizeof(myPayload), 1, false);
+        switch (deviceState) {
+            case DEVICE_STATE_INIT: {
+                // Initialize LoRaWAN stack
+                LoRaWAN.init(loraWanClass, loraWanRegion);
+                deviceState = DEVICE_STATE_JOIN;
+                break;
+            }
+            case DEVICE_STATE_JOIN: {
+                // Start join process
+                LoRaWAN.join();
+                break;
+            }
+            case DEVICE_STATE_SEND: {
+                // Example: Send data
+                uint8_t payload[] = "Hello";
+                LoRaWAN.send(sizeof(payload), payload, 1, false);
+                deviceState = DEVICE_STATE_CYCLE;
+                break;
+            }
+            case DEVICE_STATE_CYCLE: {
+                // Wait for next transmission
+                deviceState = DEVICE_STATE_SLEEP;
+                break;
+            }
+            case DEVICE_STATE_SLEEP: {
+                // Handle sleep/wake timing
+                LoRaWAN.sleep(loraWanClass);
+                break;
+            }
+            default: {
+                deviceState = DEVICE_STATE_INIT;
+                break;
+            }
         }
-
-        // Other application tasks
     }
     ```
 
 ### Key Considerations:
-*   **Board Initialization:** The `Mcu.begin()` call (or its equivalent for the specific board) is vital for Heltec devices and must precede `loraDevice->init()`.
-*   **LoRaWAN Region:** Ensure the correct `LoRaMacRegion_t` is used during initialization.
-*   **`process()` Call:** The `loraDevice->process()` in the main `loop()` is mandatory for the wrapper and underlying stack to function.
-*   **Class C Power:** Be mindful of power consumption when using `CLASS_C`.
-*   **Error Handling:** Implement robust error handling for initialization and join failures.
-*   **`platformio.ini`:** Configure the correct board and any necessary build flags (e.g., for LoRaWAN region if required by the Heltec library). 
+
+*   **Board Initialization:** Always call `Mcu.begin()` before initializing LoRaWAN.
+*   **Global Variables:** Required LoRaWAN parameters must be defined in `lora_globals.cpp`.
+*   **State Machine:** The Heltec library uses a state machine approach for device management.
+*   **Callbacks:** Use the library's native callback functions for event handling.
+*   **Power Management:** The library provides sleep functionality for power optimization.
+*   **Error Handling:** Monitor `deviceState` for error conditions and handle appropriately.
+
+## Custom DMX Implementation
+
+Due to ESP32S3 compatibility issues with existing DMX libraries, a custom UART-based DMX512 implementation was developed. This section details the technical implementation.
+
+### DMX Controller Architecture
+
+*   **UART-Based Communication:** Uses ESP32S3's HardwareSerial for precise timing control and RS-485 signal generation.
+*   **FreeRTOS Task Management:** Dedicated task for continuous DMX frame transmission with proper timing.
+*   **Thread-Safe Operation:** Mutex protection for DMX data buffer updates.
+*   **Multi-Channel Fixture Support:** JSON parsing for complex fixture configurations.
+
+### Key Technical Details
+
+*   **DMX Timing Compliance:**
+    *   Break: 100μs minimum (configurable)
+    *   Mark After Break: 12μs minimum (configurable)
+    *   Data transmission: 250,000 baud (4μs per bit)
+*   **Hardware Requirements:**
+    *   TX Pin: DMX data output
+    *   RX Pin: Optional (for future DMX input support)
+    *   Direction Pin: MAX485 DE/RE control for half-duplex operation
+*   **Memory Usage:**
+    *   513-byte DMX buffer (512 channels + start code)
+    *   FreeRTOS task stack
+    *   Mutex overhead
+
+### Usage Pattern
+
+```cpp
+// Initialize DMX controller
+DmxController dmx;
+if (dmx.begin(TX_PIN, RX_PIN, DIR_PIN, 2)) {
+    dmx.start(); // Begin continuous transmission
+    
+    // Set individual channels
+    dmx.setChannel(1, 255);
+    
+    // Set multi-channel fixtures via JSON
+    StaticJsonDocument<256> fixture;
+    fixture["channels"] = JsonArray();
+    fixture["channels"][0] = 255; // Red
+    fixture["channels"][1] = 128; // Green  
+    fixture["channels"][2] = 64;  // Blue
+    dmx.setFixtureChannels(10, fixture);
+    
+    // Update DMX output
+    dmx.update();
+}
+```
+
+## LoRaWAN Global Variables Setup
+
+The Heltec LoRaWAN library requires specific global variables to be defined. These are centralized in `src/lora_globals.cpp`:
+
+### Required Global Variables
+
+*   **Credentials:** `devEui[]`, `appEui[]`, `appKey[]` for OTAA
+*   **ABP Variables:** `nwkSKey[]`, `appSKey[]`, `devAddr` (required for compilation even if using OTAA)
+*   **Configuration:** `loraWanRegion`, `loraWanClass`, `userChannelsMask[]`
+*   **Radio Structure:** `const struct Radio_s Radio` with function pointers (can be null for Heltec library)
+
+### Implementation Notes
+
+*   All global variables must be defined in the global scope
+*   The `Radio` structure requires specific function pointer layout
+*   Channel masks are region-specific (US915 example uses subband 2)
+*   Timing parameters like `appTxDutyCycle` control transmission intervals 

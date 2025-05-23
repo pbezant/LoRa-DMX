@@ -3,46 +3,38 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <HardwareSerial.h>
 
-// DMX constants
+// LXESP32DMX configuration - prevent default object creation
+#define DO_NO_CREATE_DEFAULT_LXESP32DMX_CLASS_OBJECT 1
+#include <LXESP32DMX.h>
+
+// DMX constants for compatibility
 #define DMX_PACKET_SIZE 513
-#define MAX_DMX_CHANNELS 512
-#define DMX_BREAK_TIME_US 100  // DMX break time in microseconds (minimum 92us)
-#define DMX_MAB_TIME_US 12     // Mark after break time in microseconds (minimum 12us)
 
 class DmxController {
 private:
-    HardwareSerial* dmxSerial;
-    int serialPort;
+    LX32DMX* dmx;
     int txPin;
     int rxPin;
     int directionPin;
     bool initialized;
     
     // DMX data buffer (512 channels + start code)
-    uint8_t dmxData[DMX_PACKET_SIZE];
+    uint8_t dmxData[513];
     
-    // Mutex for thread safety
+    // Task and mutex for thread safety
+    TaskHandle_t dmxTaskHandle;
     SemaphoreHandle_t dmxMutex;
     
-    // Task handle for DMX transmission
-    TaskHandle_t dmxTaskHandle;
-    volatile bool shouldSendDMX;
-    
-    // DMX transmission task (static to work with FreeRTOS)
+    // DMX task function (static to work with FreeRTOS)
     static void dmxTask(void* parameter);
-    
-    // Internal methods
-    void sendBreak();
-    void sendMarkAfterBreak();
     
 public:
     DmxController();
     ~DmxController();
     
     // Initialize DMX with pin configuration
-    bool begin(int tx, int rx, int dir, int serialPortNum = 2);
+    bool begin(int tx, int rx, int dir);
     
     // Set channel value (1-512)
     void setChannel(uint16_t channel, uint8_t value);
@@ -53,7 +45,7 @@ public:
     // Set multiple channels from fixture data
     bool setFixtureChannels(uint16_t startChannel, const JsonObject& fixture);
     
-    // Update DMX output (triggers sending)
+    // Update DMX output
     void update();
     
     // Check if DMX is initialized and running
@@ -67,7 +59,7 @@ public:
     
     // Legacy compatibility methods
     void sendData() { update(); }
-    void saveSettings() { /* No-op for now */ }
+    void saveSettings() { /* No-op for now - LXESP32DMX doesn't have persistence */ }
     void loadSettings() { /* No-op for now */ }
     
     // Fixture management methods

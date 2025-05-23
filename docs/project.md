@@ -4,31 +4,53 @@ This document outlines the core architectural decisions, the primary technologie
 
 ## Core Architecture Decisions
 
-*   **Microcontroller-centric:** The Heltec LoRa 32 V3 is the central processing unit, handling LoRaWAN communication, DMX signal generation, and command parsing.
-*   **LoRaWAN for Remote Control:** Utilizes The Things Network (TTN) for long-range, low-power wireless command reception.
-*   **JSON for Command Structure:** Employs JSON as the data format for DMX control commands, allowing for flexible and structured data.
-*   **Modular Libraries:** Leverages dedicated libraries for distinct functionalities (LoRaWAN via RadioLib/LoRaManager, DMX via esp_dmx, JSON via ArduinoJson) to promote separation of concerns.
+*   **Microcontroller Platform:** Heltec LoRa 32 V3 with ESP32S3 and SX126x radio
+*   **LoRaWAN Communication:** Official Heltec LoRaWAN library for optimal hardware compatibility
+*   **State Machine Design:** Following Heltec's recommended state machine approach for device operation
+*   **DMX Control:** Custom UART-based DMX512 implementation for ESP32S3 compatibility
+*   **Command Processing:** JSON-based command structure for flexible fixture control
 
 ## Technology Stack
 
-*   **Microcontroller:** Heltec LoRa 32 V3 (ESP32-based)
-*   **Framework:** Arduino
-*   **Primary Language:** C++ (Arduino)
+### Hardware
+*   **Microcontroller:** Heltec WiFi LoRa 32 V3
+    - ESP32S3 dual-core processor
+    - SX126x LoRa radio module
+    - Built-in OLED display
+*   **Radio:** SX126x with native Heltec driver support
+*   **DMX Interface:** MAX485 or similar RS-485 transceiver
+
+### Software
+*   **Framework:** Arduino framework on ESP32
+*   **Build System:** PlatformIO
 *   **Key Libraries:**
-    *   `RadioLib` (for LoRa/LoRaWAN communication)
-    *   `LoRaManager` (custom wrapper for RadioLib)
-    *   `ArduinoJson` (for JSON parsing)
-    *   `esp_dmx` (for DMX512 control)
-*   **Communication Protocol:** LoRaWAN (via The Things Network - TTN)
-*   **Command Data Format:** JSON
-*   **Development Environment:** PlatformIO
+    - Heltec ESP32 Dev-Boards (official LoRaWAN support)
+    - ArduinoJson for command parsing
+    - FreeRTOS for task management
+*   **Custom Components:**
+    - DMX controller implementation
+    - JSON command processor
+    - Message queue handler
 
 ## API Patterns
 
-*   **Downlink Commands via TTN:** The primary "API" is through LoRaWAN downlink messages formatted in JSON, sent via The Things Network.
-*   **Payload Formatters:** TTN payload formatters (JavaScript) are used to decode/encode messages between the network server and the device, supporting both rich JSON and simplified command structures.
-*   **Error Handling:** Relies on serial monitor debugging and potentially TTN event logs. (Further details on in-device error handling might be found in source code).
+### LoRaWAN Communication
+*   **Activation:** OTAA (Over-The-Air Activation)
+*   **Class:** Class C for continuous reception
+*   **Region:** US915 with configurable channel masks
+*   **Security:** Standard LoRaWAN AES-128 encryption
 
-## Database Schema Overview
+### Command Structure
+*   **Format:** JSON payloads
+*   **Transport:** LoRaWAN downlink messages
+*   **Processing:** ArduinoJson parser with error handling
+*   **Queueing:** Priority-based message queue
 
-*   **N/A:** This project is an embedded system and does not directly involve a traditional database. Configuration (like DMX fixture addresses) is managed by the incoming JSON commands. LoRaWAN credentials (joinEUI, devEUI, appKey) are hardcoded or configured at deployment. 
+## Database Schema
+Not applicable - embedded system without persistent storage.
+
+## Configuration Management
+*   **Build Configuration:** PlatformIO
+*   **LoRaWAN Parameters:** Defined in secrets.h
+*   **Hardware Pins:** Defined in board-specific headers
+*   **Debug Levels:** Configurable via build flags 
