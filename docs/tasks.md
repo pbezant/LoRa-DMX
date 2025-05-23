@@ -36,12 +36,12 @@ This document tracks current development tasks, their status, and associated req
     *   **PRD Link:** N/A
 
 *   **Task ID:** WRAP-001
-    *   **Description:** Develop `LoRaManager` and `DmxController` wrapper libraries.
-    *   **Assignee:** [Developer Name]
+    *   **Description:** Develop `LoRaManager` (now `LoRaWrapper`) and `DmxController` wrapper libraries.
+    *   **Assignee:** [Developer Name] / AI Assistant
+    *   **Status:** In Progress (Core LoRaWrapper Implementation Done)
+    *   **Notes:** Core `LoRaWrapper` (`ILoRaWanDevice` interface, `HeltecLoRaWan` concrete class) structure implemented. Non-intrusive callback strategy for Heltec backend developed, providing `onJoined`, `onJoinFailed` (timeout), `onDataReceived`. `onSendConfirmed` for confirmed messages currently indicates send cycle completion, not guaranteed server ACK. Full application integration and rigorous testing pending.
     *   **Requirements/Acceptance Criteria:**
-        *   Simplify API for main application logic.
-        *   Encapsulate library-specific configurations.
-    *   **PRD Link:** N/A
+        *   Simplify API for main application logic for LoRaWAN communication.
 
 *   **Task ID:** PATTERN-001
     *   **Description:** Implement basic light pattern command (e.g., `{"pattern": "strobe"}`).
@@ -50,6 +50,17 @@ This document tracks current development tasks, their status, and associated req
         *   Parse pattern command.
         *   Execute a simple strobe effect on all configured fixtures.
     *   **PRD Link:** N/A
+
+*   **Task ID:** WRAP-INT-001
+    *   **Description:** Integrate `LoRaWrapper` into main application (`src/main.cpp`) and perform initial communication tests (join, uplink, downlink).
+    *   **Assignee:** [Developer Name] / AI Assistant
+    *   **Status:** To Do
+    *   **Requirements/Acceptance Criteria:**
+        *   `main.cpp` uses `LoRaWrapper` for all LoRaWAN operations.
+        *   Device successfully joins LoRaWAN network via the wrapper.
+        *   Test uplink and downlink message handling via wrapper callbacks.
+    *   **PRD Link:** N/A
+    *   **Depends On:** WRAP-001
 
 ### Completed (This Sprint)
 
