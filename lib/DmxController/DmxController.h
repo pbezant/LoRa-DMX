@@ -124,7 +124,13 @@ public:
     /**
      * Send the current DMX data to the fixtures
      */
-    void sendData();
+    void sendDmxData();
+
+    /**
+     * Periodically update the DMX output by sending current data.
+     * This should be called regularly in the main loop or a task.
+     */
+    void update();
 
     /**
      * Clear all DMX data (set all channels to 0)

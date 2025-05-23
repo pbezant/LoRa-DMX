@@ -336,7 +336,7 @@ public:
     }
     
     // Send the DMX data
-    dmx->sendData();
+    dmx->sendDmxData();
 
     // Save pattern state periodically (every 10 steps)
     if (step % 10 == 0) {
@@ -1093,7 +1093,7 @@ bool processLightsJson(JsonArray lightsArray) {
     Serial.println("Final DMX values being sent:");
     printDmxValues(1, 20);
     
-    dmx->sendData();
+    dmx->sendDmxData();
     
     // Save settings to persistent storage
     dmx->saveSettings();
@@ -1213,7 +1213,7 @@ void setup() {
         dmxInitialized = true;
         Serial.println("DMX Initialized.");
         dmx->clearAllChannels(); // Clear DMX channels at startup
-        dmx->sendData(); // Send the cleared data to fixtures
+        dmx->sendDmxData(); // Send the cleared data to fixtures
           } else {
         Serial.println("DMX Initialization Failed!");
     }

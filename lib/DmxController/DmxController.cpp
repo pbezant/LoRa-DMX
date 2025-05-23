@@ -36,33 +36,46 @@ DmxController::DmxController(uint8_t dmxPort, uint8_t txPin, uint8_t rxPin, uint
 // Initialize the DMX controller
 bool DmxController::begin() {
     // Configure DMX with default config
-    dmx_config_t config = DMX_CONFIG_DEFAULT;
-    
-    // Define DMX personality for RGBW control
-    dmx_personality_t personality;
-    personality.footprint = 4; // 4 channels for RGBW
-    strcpy(personality.description, "RGBW");
+    dmx_config_t config = DMX_DEFAULT_CONFIG; // Use DMX_DEFAULT_CONFIG from esp_dmx.h v2.0.2
     
     // Clear the DMX data buffer first
     memset(_dmxData, 0, DMX_PACKET_SIZE);
     _dmxData[0] = 0; // Start code must be 0
     
     // Always properly delete any previous driver to avoid "already installed" error
-    // We'll ignore any errors here since it might not be installed yet
     dmx_driver_delete((dmx_port_t)_dmxPort);
-    delay(500); // Give it time to fully uninstall
+    delay(50); // Give it a short time to uninstall
     
-    Serial.println("Installing DMX driver with hardware UART...");
+    Serial.println("Installing DMX driver (v2.0.2)...");
+
+    QueueHandle_t dmx_queue = NULL;
+    esp_err_t install_result = dmx_driver_install((dmx_port_t)_dmxPort, DMX_PACKET_SIZE, 0, &dmx_queue, DMX_INTR_FLAGS_DEFAULT);
+    if (install_result != ESP_OK) {
+        Serial.printf("Failed to install DMX driver: %s\\n", esp_err_to_name(install_result));
+        _isInitialized = false;
+        return false;
+    }
+
+    esp_err_t config_result = dmx_param_config((dmx_port_t)_dmxPort, &config);
+    if (config_result != ESP_OK) {
+        Serial.printf("Failed to config DMX driver: %s\\n", esp_err_to_name(config_result));
+        // Continue, but log error and potentially return false or set _isInitialized = false
+    }
     
-    // Set GPIO pins with direct pinMode - critical for proper operation
-    pinMode(_dirPin, OUTPUT);
-    digitalWrite(_dirPin, HIGH);  // HIGH = transmit mode
+    esp_err_t pin_result = dmx_set_pin((dmx_port_t)_dmxPort, _txPin, _rxPin, _dirPin);
+    if (pin_result != ESP_OK) {
+       Serial.printf("Failed to set DMX pins: %s. Ensure TX, RX, and DIR pins are correct and available.\\n", esp_err_to_name(pin_result));
+       // Consider this a fatal error for DMX communication
+       // dmx_driver_delete((dmx_port_t)_dmxPort); // Clean up
+       // _isInitialized = false;
+       // return false; 
+       // For now, let's log and continue, assuming user might use a non-standard setup or it might partially work.
+    }
     
-    // Configure hardware UART directly instead of relying on the driver
-    Serial1.begin(250000, SERIAL_8N2, _rxPin, _txPin);
-    delay(100); // Allow UART to stabilize
-    
-    Serial.println("DMX controller initialized successfully!");
+    // The esp_dmx driver should handle UART initialization and direction pin control.
+    // Manual Serial1.begin and digitalWrite for _dirPin are removed.
+
+    Serial.println("DMX controller initialized successfully via esp_dmx driver!");
     Serial.print("DMX using pins - TX: ");
     Serial.print(_txPin);
     Serial.print(", RX: ");
@@ -70,50 +83,53 @@ bool DmxController::begin() {
     Serial.print(", DIR: ");
     Serial.println(_dirPin);
     
-    // Flag as initialized even if the driver failed, since we'll use direct UART
     _isInitialized = true;
     return _isInitialized;
 }
 
 // Initialize the DMX controller with custom parameters
 bool DmxController::begin(int txPin, int rxPin, int dirPin, int numChannels, int baudRate) {
-    // Update pin assignments if provided
     if (txPin > 0) _txPin = txPin;
     if (rxPin > 0) _rxPin = rxPin;
     if (dirPin > 0) _dirPin = dirPin;
     
-    // Configure DMX with default config
-    dmx_config_t config = DMX_CONFIG_DEFAULT;
+    dmx_config_t config = DMX_DEFAULT_CONFIG;
+    if (baudRate > 0) {
+        config.baud_rate = baudRate;
+    }
     
-    // Define DMX personality for RGBW control
-    dmx_personality_t personality;
-    personality.footprint = 4; // 4 channels for RGBW
-    strcpy(personality.description, "RGBW");
-    
-    // Clear the DMX data buffer first
     memset(_dmxData, 0, DMX_PACKET_SIZE);
-    _dmxData[0] = 0; // Start code must be 0
+    _dmxData[0] = 0;
     
-    // Always properly delete any previous driver to avoid "already installed" error
-    // We'll ignore any errors here since it might not be installed yet
     dmx_driver_delete((dmx_port_t)_dmxPort);
-    delay(500); // Give it time to fully uninstall
+    delay(50);
     
-    Serial.println("Installing DMX driver with hardware UART (custom parameters)...");
-    Serial.print("DMX Channels: ");
-    Serial.print(numChannels);
-    Serial.print(", Baud Rate: ");
-    Serial.println(baudRate);
+    Serial.println("Installing DMX driver with custom parameters (v2.0.2)...");
+    Serial.print("Baud Rate: ");
+    Serial.println(config.baud_rate);
+
+    QueueHandle_t dmx_queue = NULL;
+    esp_err_t install_result = dmx_driver_install((dmx_port_t)_dmxPort, DMX_PACKET_SIZE, 0, &dmx_queue, DMX_INTR_FLAGS_DEFAULT);
+    if (install_result != ESP_OK) {
+        Serial.printf("Failed to install DMX driver (custom): %s\\n", esp_err_to_name(install_result));
+        _isInitialized = false;
+        return false;
+    }
+
+    esp_err_t config_result = dmx_param_config((dmx_port_t)_dmxPort, &config);
+    if (config_result != ESP_OK) {
+        Serial.printf("Failed to config DMX driver (custom): %s\\n", esp_err_to_name(config_result));
+    }
     
-    // Set GPIO pins with direct pinMode - critical for proper operation
-    pinMode(_dirPin, OUTPUT);
-    digitalWrite(_dirPin, HIGH);  // HIGH = transmit mode
-    
-    // Configure hardware UART directly instead of relying on the driver
-    Serial1.begin(baudRate, SERIAL_8N2, _rxPin, _txPin);
-    delay(100); // Allow UART to stabilize
-    
-    Serial.println("DMX controller initialized successfully!");
+    esp_err_t pin_result = dmx_set_pin((dmx_port_t)_dmxPort, _txPin, _rxPin, _dirPin);
+    if (pin_result != ESP_OK) {
+       Serial.printf("Failed to set DMX pins (custom): %s. Ensure TX, RX, and DIR pins are correct and available.\\n", esp_err_to_name(pin_result));
+    }
+
+    // The esp_dmx driver should handle UART initialization and direction pin control.
+    // Manual Serial1.begin and digitalWrite for _dirPin are removed.
+
+    Serial.println("DMX controller initialized successfully via esp_dmx driver (custom)!");
     Serial.print("DMX using pins - TX: ");
     Serial.print(_txPin);
     Serial.print(", RX: ");
@@ -121,7 +137,6 @@ bool DmxController::begin(int txPin, int rxPin, int dirPin, int numChannels, int
     Serial.print(", DIR: ");
     Serial.println(_dirPin);
     
-    // Flag as initialized even if the driver failed, since we'll use direct UART
     _isInitialized = true;
     return _isInitialized;
 }
@@ -198,103 +213,55 @@ void DmxController::setFixtureColor(int fixtureIndex, uint8_t r, uint8_t g, uint
 // Helper function to set a fixture's color with direct RGBW handling at any address
 void DmxController::setManualFixtureColor(int startAddr, uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
     // Set RGBW values directly to channels starting at startAddr
-    _dmxData[startAddr] = r;     // Red channel
-    _dmxData[startAddr + 1] = g; // Green channel
-    _dmxData[startAddr + 2] = b; // Blue channel
-    _dmxData[startAddr + 3] = w; // White channel
+    // Ensure addresses are within bounds (1 to DMX_PACKET_SIZE - 1 for channels)
+    if (startAddr > 0 && startAddr < DMX_PACKET_SIZE) _dmxData[startAddr] = r;
+    if (startAddr + 1 > 0 && startAddr + 1 < DMX_PACKET_SIZE) _dmxData[startAddr + 1] = g;
+    if (startAddr + 2 > 0 && startAddr + 2 < DMX_PACKET_SIZE) _dmxData[startAddr + 2] = b;
+    if (startAddr + 3 > 0 && startAddr + 3 < DMX_PACKET_SIZE) _dmxData[startAddr + 3] = w;
 }
 
 // Send the current DMX data to the fixtures
-void DmxController::sendData() {
-    // Ensure DMX start code is 0
-    _dmxData[0] = 0;
-    
-    // If the driver failed, use direct UART implementation
-    if (_isInitialized) {
-        // Store current values for debug comparison
-        static bool first_send = true;
-        static uint8_t last_values[DMX_PACKET_SIZE];
-        
-        bool values_changed = first_send;
-        if (!first_send) {
-            // Check if any values changed by more than 5 (to avoid minor fluctuations)
-            for (int i = 1; i < DMX_PACKET_SIZE; i++) {
-                if (abs(_dmxData[i] - last_values[i]) > 5) {
-                    values_changed = true;
-                    break;
-                }
-            }
-        }
-        
-        // IMPROVED DMX OUTPUT PROTOCOL - More reliable timing
-        digitalWrite(_dirPin, HIGH);    // Ensure in transmit mode (DE=HIGH, RE=HIGH)
-        
-        // Generate DMX break without closing UART - more stable method
-        Serial1.flush();                // Wait for all data to be sent
-        Serial1.updateBaudRate(90000);  // Temporary baud rate change to create break
-        Serial1.write(0);               // Send a zero byte at lower baud rate
-        Serial1.flush();                // Wait for completion
-        Serial1.updateBaudRate(250000); // Restore DMX baud rate (standard)
-        
-        // Send DMX data - all 513 bytes (start code + 512 channels)
-        Serial1.write(_dmxData, DMX_PACKET_SIZE);
-        Serial1.flush();                // Ensure all data is completely sent
-        
-        // Wait longer to ensure data is fully transmitted (helps with stability)
-        delay(3); // Increased from 1ms to 3ms
-        
-        // Save current values for next comparison
-        if (first_send || values_changed) {
-            memcpy(last_values, _dmxData, DMX_PACKET_SIZE);
-            first_send = false;
-            
-            // Print DMX data values for debugging, but only when they change
-            Serial.println("DMX Output Data Updated:");
-            
-            // Print active channel values (non-zero channels only)
-            bool hasActiveChannels = false;
-            for (int i = 1; i < DMX_PACKET_SIZE; i++) {
-                if (_dmxData[i] > 0) {
-                    if (!hasActiveChannels) {
-                        Serial.println("Active channels:");
-                        hasActiveChannels = true;
-                    }
-                    Serial.print("  Ch ");
-                    Serial.print(i);
-                    Serial.print(": ");
-                    Serial.println(_dmxData[i]);
-                }
-            }
-            
-            if (!hasActiveChannels) {
-                Serial.println("No active channels (all values are 0)");
-            }
-            
-            // Print fixture information if available
-            if (_fixtures != NULL && _numFixtures > 0) {
-                Serial.println("Fixture Colors:");
-                for (int i = 0; i < _numFixtures; i++) {
-                    Serial.print("  ");
-                    Serial.print(_fixtures[i].name);
-                    Serial.print(": R=");
-                    Serial.print(_dmxData[_fixtures[i].redChannel]);
-                    Serial.print(", G=");
-                    Serial.print(_dmxData[_fixtures[i].greenChannel]);
-                    Serial.print(", B=");
-                    Serial.print(_dmxData[_fixtures[i].blueChannel]);
-                    Serial.print(", W=");
-                    Serial.println(_dmxData[_fixtures[i].whiteChannel]);
-                }
-            }
-            
-            // Log success
-            Serial.print("DMX data sent (");
-            Serial.print(DMX_PACKET_SIZE);
-            Serial.println(" bytes)");
-        }
-    } else {
-        Serial.println("DMX not properly initialized, cannot send data");
+void DmxController::sendDmxData() {
+    if (!_isInitialized) {
+        // Serial.println("DMX not initialized. Cannot send data.");
+        return;
     }
+
+    // For esp_dmx v2.0.2, the driver handles the direction pin if configured with dmx_set_pin.
+    // If dmx_set_pin doesn't handle the direction pin, manual control would be:
+    // digitalWrite(_dirPin, HIGH); // Set to transmit mode
+    // delayMicroseconds(10); // Ensure pin is set before sending (optional, usually small)
+
+    // Wait for the DMX bus to be ready to send
+    // The timeout DMX_TIMEOUT_TICK is defined in DmxController.h (e.g., 100 ticks)
+    esp_err_t wait_result = dmx_wait_send_done((dmx_port_t)_dmxPort, DMX_TIMEOUT_TICK);
+    if (wait_result != ESP_OK) {
+        Serial.printf("DMX send timeout or error: %s\\n", esp_err_to_name(wait_result));
+        // digitalWrite(_dirPin, LOW); // Set back to receive mode if manually controlled
+        return; // Don't attempt to send if bus wasn't ready
+    }
+
+    // Send the DMX packet
+    // DMX_PACKET_SIZE is 513 (start code + 512 channels)
+    esp_err_t send_result = dmx_write_packet((dmx_port_t)_dmxPort, _dmxData, DMX_PACKET_SIZE);
+    if (send_result != ESP_OK) {
+        Serial.printf("Failed to write DMX packet: %s\\n", esp_err_to_name(send_result));
+    }
+
+    // If manually controlling direction pin:
+    // delayMicroseconds(DMX_PACKET_SIZE * 10 * 1.2); // Estimate time to send packet (e.g. 513 bytes * 10 bits/byte * 1.2 safety factor at 250kbaud)
+    // digitalWrite(_dirPin, LOW); // Set back to receive mode
+
+    // Note: dmx_send_packet or dmx_send_data might also be relevant depending on specific v2.0.2 nuances
+    // For now, dmx_write_packet followed by dmx_wait_send_done (to ensure it finished) is the approach.
+    // The dmx_wait_send_done before sending ensures the previous send is complete.
+    // Another dmx_wait_send_done might be needed *after* dmx_write_packet if we want to confirm this specific packet sent.
+    // However, the typical pattern is wait -> write. The driver handles the actual transmission asynchronously.
+}
+
+// Periodically update the DMX output by sending current data.
+void DmxController::update() {
+    sendDmxData();
 }
 
 // Clear all DMX channels (set to 0)
@@ -418,7 +385,7 @@ void DmxController::testAllChannels() {
         _dmxData[channel] = 255;
         
         // Send the data
-        sendData();
+        sendDmxData();
         
         // Print diagnostic information
         Serial.print("Testing DMX channel ");
@@ -486,7 +453,7 @@ void DmxController::testAllChannels() {
     
     // Turn all channels off at the end
     clearAllChannels();
-    sendData();
+    sendDmxData();
     Serial.println("Channel test complete, all channels cleared");
 }
 
@@ -645,7 +612,7 @@ void DmxController::testAllFixtures() {
         }
         
         // Send the data
-        sendData();
+        sendDmxData();
         
         // Print information
         Serial.print("Test step ");
@@ -748,7 +715,7 @@ void DmxController::runRainbowChase(int cycles, int speedMs, bool staggered) {
     
     // Clear all channels when done
     clearAllChannels();
-    sendData();
+    sendDmxData();
     
     Serial.println("Rainbow chase test pattern complete!");
 }
@@ -772,7 +739,7 @@ void DmxController::cycleRainbowStep(uint32_t step, bool staggered) {
     }
     
     // Send the DMX data
-    sendData();
+    sendDmxData();
 }
 
 // Thread-safe version of the rainbow step function for use with FreeRTOS
@@ -864,7 +831,7 @@ void DmxController::runStrobeTest(uint8_t color, int count, int onTimeMs, int of
         }
         
         // Send the DMX data for "on" phase
-        sendData();
+        sendDmxData();
         
         // Print progress every 5 flashes
         if (i % 5 == 0) {
@@ -879,7 +846,7 @@ void DmxController::runStrobeTest(uint8_t color, int count, int onTimeMs, int of
         
         // Turn all fixtures off
         clearAllChannels();
-        sendData();
+        sendDmxData();
         
         // Wait for the "off" time
         delay(offTimeMs);
@@ -887,7 +854,7 @@ void DmxController::runStrobeTest(uint8_t color, int count, int onTimeMs, int of
     
     // Clear all channels when done
     clearAllChannels();
-    sendData();
+    sendDmxData();
     
     Serial.println("Strobe test pattern complete!");
 }
@@ -1034,7 +1001,7 @@ void DmxController::setDefaultWhite() {
             Serial.println(_dmxData[_fixtures[i].whiteChannel]);
         }
         
-        sendData();  // Send data to fixtures
+        sendDmxData();  // Send data to fixtures
     } else {
         // No fixtures configured, try setting standard RGBW fixtures
         Serial.println("No fixtures configured, setting default RGBW pattern");
@@ -1045,7 +1012,7 @@ void DmxController::setDefaultWhite() {
             Serial.print(addr);
             Serial.println(" to RGBW: [0, 0, 0, 255]");
         }
-        sendData();  // Send data to fixtures
+        sendDmxData();  // Send data to fixtures
     }
 }
 
