@@ -2,71 +2,56 @@
 
 This document tracks current development tasks, their status, and associated requirements. It should be updated regularly to reflect project progress.
 
-## Sprint/Iteration: Initial Development Phase
+## Sprint/Iteration: LoRaWAN Class C Migration (2024)
 
-### In Progress
+### Archived
 
-*   **Task ID:** CORE-001
-    *   **Description:** Basic LoRaWAN communication setup and testing with TTN.
+*   **Task ID:** LORA-001
+    *   **Description:** Migrate to official Heltec ESP32 Dev-Boards library for LoRaWAN Class C operation.
+    *   **Status:** Archived (abandoned due to upstream issues)
+
+### Completed (Superceded by Custom Implementation within LORA-002)
+
+*   **Task ID:** LORA-002
+    *   **Description:** Migrate to `ropg/heltec_esp32_lora_v3` + `LoRaWAN_ESP32` + `RadioLib` (v7.1.2) and implement true LoRaWAN Class C operation.
+    *   **Status:** Completed
+    *   **Assignee:** AI & Big Daddy
+    *   **Requirements/Acceptance Criteria Met:**
+        *   PlatformIO configured with `RadioLib` v7.1.2 and necessary dependencies.
+        *   US915 region, OTAA join using credentials from `secrets.h` (converted from hex strings to `uint64_t` and `uint8_t[]` at runtime).
+        *   Device operates in true Class C mode through direct `SX1262` radio management for continuous receive on RX2 parameters, including custom ISR for `RX_DONE`.
+        *   `LoRaWANHelper.cpp` and `LoRaWANHelper.h` extensively refactored to use `RadioLib` v7.1.2 API (e.g., `LoRaWANNode` init, `beginOTAA`, `send`).
+        *   Downlink callback mechanism retained; `lorawan_helper_loop()` handles packet reception, parsing via `node->parseDownlink()`, and then calls user callback.
+        *   Radio is re-armed for continuous Class C receive after every uplink and after processing each received packet.
+        *   (Full DMX logic integration and periodic uplinks are part of the main application logic, assumed to leverage this helper.)
+        *   All significant changes and decisions documented in `docs/memory.md` and `docs/technical.md`.
+    *   **PRD Link:** N/A
+    *   **Depends On:** None
+
+*   **Task ID:** LORA-004
+    *   **Description:** Clean up `lib/` directory: organize helper files into subdirectories and remove obsolete/duplicate files.
+    *   **Status:** Completed
+    *   **Assignee:** AI & Big Daddy
+    *   **Requirements/Acceptance Criteria Met:**
+        *   `LoRaWANHelper`, `DMXHelper`, and `LEDHelper` files are located in their respective subdirectories within `lib/`.
+        *   Loose helper files in the root of `lib/` have been deleted.
+        *   Obsolete directories (`lib/DmxController/`, `lib/LoRaManager.bak2/`) have been deleted.
+        *   The `lib/README` file was removed (pending confirmation if it needs to be restored with specific content).
+    *   **PRD Link:** N/A
+    *   **Depends On:** None
+
+### To Do
+
+*   **Task ID:** LORA-003
+    *   **Description:** Testing and validation of LoRaWAN Class C + DMX system
     *   **Assignee:** [Developer Name]
     *   **Requirements/Acceptance Criteria:**
-        *   Device successfully joins TTN using OTAA.
-        *   Device can receive simple downlink messages.
-        *   Device can send simple uplink messages (e.g., ACK, status).
+        *   Successful join, uplink, and downlink on Chirpstack/TTN
+        *   Class C operation validated (continuous receive)
+        *   DMX output responds to downlink commands
+        *   Periodic uplinks received by network
     *   **PRD Link:** N/A
-    *   **Depends On:** N/A
-
-*   **Task ID:** DMX-001
-    *   **Description:** Initial DMX output implementation and testing.
-    *   **Assignee:** [Developer Name]
-    *   **Requirements/Acceptance Criteria:**
-        *   Control a single DMX channel on a connected fixture.
-        *   Verify DMX signal timing and integrity.
-    *   **PRD Link:** N/A
-    *   **Depends On:** N/A
-
-### To Do (Backlog for Current Sprint)
-
-*   **Task ID:** JSON-001
-    *   **Description:** Implement JSON command parsing for basic DMX control (single fixture, multiple channels).
-    *   **Assignee:** [Developer Name]
-    *   **Requirements/Acceptance Criteria:**
-        *   Parse JSON payload like `{"address": 1, "channels": [255, 0, 128, 0]}`.
-        *   Update DMX output based on parsed JSON.
-    *   **PRD Link:** N/A
-
-*   **Task ID:** WRAP-001
-    *   **Description:** Develop `LoRaManager` and `DmxController` wrapper libraries.
-    *   **Assignee:** [Developer Name]
-    *   **Requirements/Acceptance Criteria:**
-        *   Simplify API for main application logic.
-        *   Encapsulate library-specific configurations.
-    *   **PRD Link:** N/A
-
-*   **Task ID:** PATTERN-001
-    *   **Description:** Implement basic light pattern command (e.g., `{"pattern": "strobe"}`).
-    *   **Assignee:** [Developer Name]
-    *   **Requirements/Acceptance Criteria:**
-        *   Parse pattern command.
-        *   Execute a simple strobe effect on all configured fixtures.
-    *   **PRD Link:** N/A
-
-### Completed (This Sprint)
-
-*   **Task ID:** SETUP-001
-    *   **Description:** Initial project setup with PlatformIO, Heltec board configuration, and core library dependencies.
-    *   **Assignee:** [Developer Name]
-    *   **Completion Date:** [Date]
-    *   **Link to PR/Commit:** [Initial Commit Link]
-
-## Future/Backlog (Beyond Current Sprint)
-
-*   Implement all advanced pattern commands from `README.md`.
-*   Add support for saving/loading configurations (e.g., default DMX scenes).
-*   Develop robust error handling and reporting via LoRaWAN uplink.
-*   Investigate power optimization for battery operation.
-*   Create a more comprehensive TTN payload formatter for uplink status messages.
-*   Add more detailed debugging output options.
+    *   **Depends On:** LORA-002
 
 ## Blockers
 

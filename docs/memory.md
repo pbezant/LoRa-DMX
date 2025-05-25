@@ -6,8 +6,18 @@ This document records key implementation decisions, how edge cases were handled,
 
 *   **Choice of Heltec LoRa 32 V3:** Selected for its integrated ESP32, LoRa capabilities, and Arduino compatibility, providing a good balance of processing power and connectivity for this type of application.
 *   **OTAA for LoRaWAN Activation:** Chosen for better security compared to ABP (Activation By Personalization).
-*   **Use of `RadioLib`:** A comprehensive library for various radio modules, offering robust LoRaWAN support.
-*   **Custom `LoRaManager` Wrapper:** Likely created to simplify `RadioLib` usage, encapsulate TTN credentials and connection logic, and provide a cleaner interface for the main application.
+*   **Use of `RadioLib` (v7.1.2):** A comprehensive library for various radio modules, offering robust LoRaWAN support. Updated to v7.1.2, necessitating significant code changes.
+*   **Custom `LoRaWANHelper` (formerly `LoRaManager`):** Wrapper created to simplify `RadioLib` usage, encapsulate LoRaWAN credentials (from `secrets.h`) and connection logic, and provide a cleaner interface for the main application. Heavily refactored for RadioLib v7.x.
+*   **Direct `SX1262` Radio Management for True Class C:** Implemented a custom continuous receive mechanism for LoRaWAN Class C. This involves:
+    *   Directly configuring the `SX1262` radio (via `sx1262_radio` pointer obtained from the global `radio` object) for continuous reception on RX2 parameters (frequency, datarate converted to SF/BW, sync word).
+    *   Setting a custom ISR (`lorawan_custom_class_c_isr`) on DIO1 for `RX_DONE` events.
+    *   The `lorawan_helper_loop()` function now actively checks an ISR-set flag (`lorawan_packet_received_flag`), reads data directly from the radio using `sx1262_radio->readData()`, then passes it to `node->parseDownlink()` and `node->getDownlinkData()`.
+    *   Crucially, `lorawan_helper_enable_class_c_receive()` is called after every uplink and after processing a received packet to immediately re-arm the radio for continuous listening.
+*   **RadioLib v7.x API Adaptation Details:**
+    *   `LoRaWANNode` initialization: `new RadioLib::LoRaWANNode(sx1262_radio, &US915);` (passing radio module and band structure).
+    *   Credential handling: EUIs converted from hex strings to `uint64_t` and AppKey to `uint8_t[]` using helper functions (`eui_string_to_u64`, `appkey_string_to_bytes`).
+    *   OTAA Join: `node->beginOTAA(joinEUI_u64, devEUI_u64, nwkKey_bytes, appKey_bytes);`.
+    *   Uplinks: `node->send(payload, len, confirmed);`.
 *   **Use of `esp_dmx`:** A dedicated library for ESP32 to handle DMX512 protocol complexities and timing.
 *   **Custom `DmxController` Wrapper:** Similar to `LoRaManager`, likely developed to abstract `esp_dmx` functionalities for easier use in the main application (e.g., managing multiple fixtures from a JSON payload).
 *   **`ArduinoJson` for Payload Parsing:** A standard and efficient library for handling JSON on microcontrollers, suitable for parsing commands.
@@ -25,6 +35,8 @@ This document records key implementation decisions, how edge cases were handled,
 *   **Remote DMX Control:** Achieved wireless control of DMX fixtures over a long-range, low-power network.
 *   **Dynamic Fixture Configuration:** Using JSON allows changing DMX addresses and channel counts without reflashing firmware.
 *   **Simplified LoRaWAN & DMX Integration:** Achieved through wrapper libraries, making the main application logic cleaner.
+*   **Adaptation to RadioLib v7.x API Changes:** Successfully migrated `LoRaWANHelper` from an older RadioLib API to version 7.1.2, which involved significant breaking changes in LoRaWAN node initialization, credential handling, and uplink/downlink processing. This required a detailed investigation of the new API through documentation and examples.
+*   **Workaround for RadioLib `edit_file` Model Limitations:** Encountered issues with the AI model failing to apply large or complex diffs to `LoRaWANHelper.cpp` during the refactoring process. Overcame this by breaking down the changes into smaller, more manageable chunks and applying them iteratively.
 
 ## Rejected Approaches
 
@@ -32,3 +44,6 @@ This document records key implementation decisions, how edge cases were handled,
 *   **(Possibly) Custom Binary Command Protocol:** JSON was chosen, likely for its flexibility and human-readability, despite a slightly larger payload size.
 *   **(Possibly) Other LoRa Libraries:** `RadioLib` was selected, reasons could include feature set, community support, or prior experience.
 *   **(Possibly) Bit-banging DMX:** Using a dedicated library like `esp_dmx` is more reliable and less CPU-intensive than implementing the DMX protocol manually. 
+*   **Relying on `LoRaWANNode::loop()` for Class C Downlinks:** The standard `node->loop()` in RadioLib, while handling general LoRaWAN operations, was deemed insufficient for the *immediate* and *continuous* listening required by a true Class C device. The brief moments where the radio might not be in receive mode (e.g., during internal processing of `node->loop()`) were considered unacceptable for this project's Class C goals.
+*   **Using Older RadioLib Versions:** While potentially avoiding the API migration effort, sticking with an outdated version was rejected to leverage the latest bug fixes, features, and ongoing support in RadioLib v7.x.
+*   **Attempting Full File Edits for Large Refactors:** Initial attempts to apply the entire `LoRaWANHelper.cpp` refactor in a single `edit_file` operation were largely unsuccessful, with the model applying only partial or incorrect changes. The approach was rejected in favor of iterative, smaller, targeted edits. 
