@@ -40,6 +40,32 @@ This document tracks current development tasks, their status, and associated req
     *   **PRD Link:** N/A
     *   **Depends On:** None
 
+*   **Task ID:** LORA-005
+    *   **Description:** Replace DmxController dependency with direct esp_dmx library usage
+    *   **Status:** Completed
+    *   **Assignee:** AI & Big Daddy
+    *   **Requirements/Acceptance Criteria Met:**
+        *   Removed dependency on the obsolete DmxController.h.
+        *   Rewrote DMXHelper.cpp to use esp_dmx library directly.
+        *   Implemented all required DMX functionality (fixture control, patterns, JSON command processing).
+        *   Added detailed error handling and parameter validation.
+    *   **PRD Link:** N/A
+    *   **Depends On:** None
+
+### In Progress
+
+*   **Task ID:** LORA-006
+    *   **Description:** Fix LoRaWANHelper include issues with RadioLib v7.1.2
+    *   **Status:** In Progress
+    *   **Assignee:** AI & Big Daddy
+    *   **Requirements/Acceptance Criteria:**
+        *   Fix incomplete type errors with RadioLib::LoRaWANNode and RadioLib::LoRaWANBand.
+        *   Ensure proper inclusion of RadioLib headers.
+        *   Fix missing LORAWAN_DEVICE_EUI and related constants from secrets.h.
+        *   Ensure LoRaWANHelper compiles successfully with RadioLib v7.1.2.
+    *   **PRD Link:** N/A
+    *   **Depends On:** None
+
 ### To Do
 
 *   **Task ID:** LORA-003
@@ -51,8 +77,9 @@ This document tracks current development tasks, their status, and associated req
         *   DMX output responds to downlink commands
         *   Periodic uplinks received by network
     *   **PRD Link:** N/A
-    *   **Depends On:** LORA-002
+    *   **Depends On:** LORA-002, LORA-005, LORA-006
 
 ## Blockers
 
-*   [e.g., Waiting for DMX test fixtures to arrive] 
+*   LoRaWANHelper.cpp compilation errors with RadioLib v7.1.2 (see LORA-006)
+*   Cannot upload firmware to test functionality until LoRaWANHelper issues are resolved 

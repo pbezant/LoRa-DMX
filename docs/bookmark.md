@@ -67,21 +67,27 @@
 
 *   **Build Status:**
     *   `LoRaWANHelper.cpp` and `LoRaWANHelper.h` have been refactored for RadioLib v7.1.2.
-    *   The helper now compiles successfully after addressing include order, type definitions, and ensuring `RadioLib::SX1262*` is passed from `main.cpp`.
-    *   Credential constants (`LORAWAN_DEVICE_EUI`, etc.) are correctly sourced from `secrets.h`.
-    *   `LORAWAN_DOWNLINK_MAX_SIZE` is defined in `LoRaWANHelper.h`.
+    *   Currently facing compilation issues with RadioLib and LoRaWANHelper - need to fix missing type definitions and include path issues.
+    *   `DMXHelper.cpp` has been completely rewritten to use the `esp_dmx` library directly, removing the dependency on the obsolete `DmxController.h`.
+    *   Periodic uplink logic was added to `main.cpp` to send a status message every 5 minutes.
+    *   The LED helper files are functional with minor adjustments.
 *   **Library Organization:**
     *   The `lib/` directory has been cleaned up. Helper files (`LoRaWANHelper`, `DMXHelper`, `LEDHelper`) are now located within their respective subdirectories. Duplicate and obsolete files/folders have been removed.
+*   **Current Blockers:**
+    *   LoRaWANHelper compilation errors with RadioLib v7.1.2 need to be resolved before firmware can be uploaded and tested.
+    *   Specific issues include: incomplete type errors with RadioLib::LoRaWANNode and RadioLib::LoRaWANBand, missing symbols from secrets.h.
 *   **Immediate Next Steps:**
-    1.  **Thorough Testing (LORA-003):**
+    1.  **Fix LoRaWANHelper Issues (LORA-006):**
+        *   Resolve RadioLib include issues.
+        *   Fix missing type definitions and constants.
+        *   Ensure proper header inclusion and forward declarations.
+    2.  **Thorough Testing (LORA-003):**
         *   Test OTAA join with the network server.
         *   Verify successful uplink transmission.
         *   Validate true Class C operation: continuous downlink reception.
         *   Test downlink message processing and DMX command execution.
-        *   Confirm periodic uplinks (if implemented in `main.cpp` logic).
-    2.  **DMX Logic Integration:** Ensure `dmx_helper_process_json_command` in `main.cpp` correctly interfaces with the `DMXHelper` library and controls DMX output as expected.
-    3.  **LED Feedback:** Ensure `LEDHelper` provides correct status indications for network join, uplink/downlink activity, and errors.
-    4.  **Documentation Review:** Update `docs/memory.md` and `docs/technical.md` with any new insights or final decisions made during the RadioLib v7 migration and Class C implementation.
+        *   Confirm periodic uplinks are working.
+    3.  **Documentation Review:** Update `docs/memory.md` and `docs/technical.md` with any new insights or final decisions.
 
 ---
 

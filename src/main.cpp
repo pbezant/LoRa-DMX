@@ -14,6 +14,7 @@
 // --- Configuration ---
 const unsigned long UPLINK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 unsigned long last_uplink_ms = 0;
+const char* UPLINK_PAYLOAD = "{\"status\":\"alive\"}"; // Example payload
 
 // Helper function to convert a hex character to its integer value
 static int hex_char_to_int(char c) {
@@ -93,7 +94,7 @@ void setup() {
     // Pass the global 'radio' object (SX1262 type from heltec.h), Serial for debug, desired app interval, and the downlink callback.
     // The EUI/Key byte arrays are no longer passed here; lorawan_helper_join will use strings from secrets.h.
     // Explicitly cast &radio to RadioLib::SX1262* to resolve type ambiguity.
-    lorawan_helper_init( (RadioLib::SX1262*)&radio, &Serial, UPLINK_INTERVAL_MS, handle_downlink);
+    lorawan_helper_init( (SX1262*)&radio, &Serial, UPLINK_INTERVAL_MS, handle_downlink);
 
     if (lorawan_helper_join(&Serial)) { // Pass Serial for debugging
         led_indicate_join_success();
@@ -106,8 +107,24 @@ void setup() {
 }
 
 void loop() {
-    lorawan_helper_loop(&Serial); // Pass Serial for debugging
+    lorawan_helper_loop(&Serial); // Handles downlink processing and Class C re-arming
     dmx_helper_loop();
+
+    if (millis() - last_uplink_ms > UPLINK_INTERVAL_MS) {
+        if (lorawan_helper_is_joined()) {
+            Serial.println(F("[Main] Sending periodic uplink..."));
+            // You might want to send actual status data here
+            int uplink_status = lorawan_helper_send_uplink(UPLINK_PAYLOAD, strlen(UPLINK_PAYLOAD), false, &Serial); // false for unconfirmed
+            if (uplink_status == RADIOLIB_ERR_NONE) {
+                Serial.println(F("[Main] Periodic uplink sent successfully (or queued)."));
+            } else {
+                Serial.print(F("[Main] Periodic uplink failed, error: "));
+                Serial.println(uplink_status);
+            }
+        }
+        last_uplink_ms = millis();
+    }
+
     delay(5); // Small delay
 }
 

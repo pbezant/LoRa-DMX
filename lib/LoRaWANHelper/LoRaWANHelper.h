@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <RadioLib.h>
+#include <Arduino.h>
 // #include <stdbool.h> // bool is available in C++
 
 #define LORAWAN_DOWNLINK_MAX_SIZE 64
@@ -14,10 +16,11 @@
 // If C-only consumption was a strict goal, more `void*` and casting would be needed.
 
 #ifdef __cplusplus
-// Forward declaration for C++
-namespace RadioLib {
-    class SX1262;
-}
+// Forward declaration of RadioLib classes - these are in global namespace, not RadioLib:: namespace
+class SX1262;
+class LoRaWANNode;
+// LoRaWANBand_t is in the global namespace, not in RadioLib
+struct LoRaWANBand_t;
 class Print; // Forward declare Print for Arduino
 #else
 // For C, treat as opaque pointers if absolutely necessary, though this header is for C++ primarily
@@ -42,7 +45,7 @@ typedef void (*lorawan_downlink_callback_t)(const uint8_t* payload, size_t len, 
 // This function now takes a pointer to the SX1262 radio object and a Print object for debugging.
 // It's a C++ function due to RadioLib::SX1262* and Print*.
 #ifdef __cplusplus
-bool lorawan_helper_init(RadioLib::SX1262* radio_ptr, Print* debug_print, uint32_t app_interval, lorawan_downlink_callback_t downlink_callback);
+bool lorawan_helper_init(SX1262* radio_ptr, Print* debug_print, uint32_t app_interval, lorawan_downlink_callback_t downlink_callback);
 #endif
 
 
@@ -79,9 +82,6 @@ uint32_t lorawan_helper_get_dev_addr(Print* debug_print); // Added debug_print
 // Flag set by the radio's DIO1 ISR when a packet is received (or RX_DONE event).
 // Needs to be accessible by the main loop.
 extern volatile bool lorawan_packet_received_flag;
-
-// Tracks if our custom Class C continuous receive mode is active.
-// extern bool lorawan_is_class_c_active; // This was in .h but not consistently used in .cpp, custom_class_c_enabled is used internally. Let's remove.
 
 // Manually enable/re-enable continuous receive for Class C on RX2 parameters.
 // Returns true on success.

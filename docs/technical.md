@@ -25,21 +25,37 @@
     - `LoRaWANHelper::loop()` processes these flags, reads directly from the radio, then uses `RadioLib::LoRaWANNode::parseDownlink()` and `getDownlinkData()`.
     - The radio is immediately re-armed for continuous receive after an uplink and after processing a received packet.
 - **RadioLib v7.x API Migration:** The `LoRaWANHelper.cpp` has been significantly refactored to align with the breaking changes in RadioLib v7.1.2, particularly for node initialization, credential passing (OTAA), and uplink mechanisms.
-- **Uplink:** Periodic status/heartbeat messages, format to be defined as needed.
+- **DMX Implementation:** Complete rewrite of DMXHelper.cpp to use esp_dmx library directly:
+    - Configured with appropriate pins for the Heltec hardware (TX: GPIO17, RX: GPIO16, ENABLE: GPIO21).
+    - Uses a buffer-based approach with DMX_PACKET_SIZE array.
+    - DMX functions like dmx_driver_install(), dmx_set_pin(), dmx_write(), and dmx_send_num() for direct control.
+    - Handles DMX patterns (color fade, rainbow, strobe, etc.) with the appropriate timing and buffer management.
+    - Robust JSON command parsing with ArduinoJson for dynamic control.
+- **Periodic Uplinks:** Added to main.cpp with configurable interval (default: 5 minutes).
+- **Uplink Format:** Simple JSON status message: `{"status":"alive"}`, extensible for future needs.
 - **DMX Logic:** Follows the structure and command formats in README.md, including support for patterns and direct channel control.
 - **Error Handling:** Robust error handling for join, downlink, and DMX operations.
+
+## Current Technical Challenges
+- **LoRaWANHelper Compilation Issues:** The LoRaWANHelper.cpp file is experiencing compilation errors with RadioLib v7.1.2:
+    - Incomplete type errors for RadioLib::LoRaWANNode and RadioLib::LoRaWANBand.
+    - Missing LORAWAN_DEVICE_EUI and related constants from secrets.h.
+    - Issues with forward declarations and include paths.
+    - Work in progress to resolve these issues (see LORA-006 in tasks.md).
 
 ## Patterns
 - **Separation of Concerns:** LoRaWAN, DMX, and JSON logic are modular and decoupled.
 - **Runtime Credential Conversion:** No hardcoded byte arrays; all credentials are converted at runtime from hex strings.
 - **Documentation:** All changes and rationale are documented in the docs/ folder.
+- **Direct Hardware Library Usage:** For DMX, moved from a wrapper approach to direct esp_dmx library usage for better maintainability.
 
 ## Deprecated/Abandoned Approaches
 - The official Heltec ESP32 Dev-Boards library is no longer used due to upstream issues.
+- DmxController.h wrapper has been removed in favor of direct esp_dmx library usage.
 
 ## Next Steps
-- Complete migration to new stack (see bookmark.md and tasks.md)
-- Implement and test all required features
+- Resolve LoRaWANHelper compilation issues with RadioLib v7.1.2
+- Complete the testing phase
 - Keep documentation up to date
 
 # Technical Specifications and Established Patterns
@@ -56,7 +72,7 @@ This document details technical specifications for various aspects of the projec
 
 ### Pattern A: Wrapper Libraries for Hardware Abstraction
 
-*   **Description:** Custom libraries (`LoRaWANHelper.cpp`, `DMXHelper.cpp`) are used to simplify interaction with underlying hardware/communication libraries (`RadioLib`, `esp_dmx`). This provides a cleaner API for the main application logic and encapsulates hardware-specific details. `LoRaWANHelper.cpp` has been extensively refactored for RadioLib v7.x.
+*   **Description:** Custom libraries (`LoRaWANHelper.cpp`, `DMXHelper.cpp`) are used to simplify interaction with underlying hardware/communication libraries (`RadioLib`, `esp_dmx`). This provides a cleaner API for the main application logic and encapsulates hardware-specific details. `LoRaWANHelper.cpp` has been extensively refactored for RadioLib v7.x, while `DMXHelper.cpp` now uses the esp_dmx library directly instead of through a wrapper.
 *   **When to Use:** When interacting with complex external libraries or hardware peripherals to provide a simplified and project-specific interface.
 *   **Example (or link to example code):**
     ```cpp
@@ -65,15 +81,24 @@ This document details technical specifications for various aspects of the projec
     // lora.joinNetwork(joinEUI, devEUI, appKey);
     // if (lora.messageReceived()) { /* process message */ }
 
-    // DmxController dmx;
-    // dmx.setChannel(1, 255);
+    // Using DMXHelper
+    dmx_helper_init();
+    dmx_helper_set_fixture_channels(1, channelValues, 4);
+    dmx_helper_update();
     ```
 
 ### Pattern B: JSON for Dynamic Configuration/Commands
 
 *   **Description:** JSON payloads received over LoRaWAN are parsed to dynamically control DMX fixtures. This avoids hardcoding fixture settings and allows flexible remote configuration.
 *   **When to Use:** For sending structured data or commands to the device, especially when the parameters can vary.
-*   **Example (or link to example code):** (See JSON command format in `README.md`)
+*   **Example (or link to example code):** 
+    ```json
+    // Example JSON command to set a fixture
+    {"cmd":"set","addr":1,"values":[255,0,0,0]}
+    
+    // Example JSON command to start a pattern
+    {"cmd":"rainbow","speed":50,"cycles":0}
+    ```
 
 ### Pattern C: Direct Radio Management for Custom True Class C Behavior
 
@@ -87,6 +112,12 @@ This document details technical specifications for various aspects of the projec
     *   The radio is explicitly re-enabled for continuous reception after every uplink and after processing any received downlink.
 *   **When to Use:** When precise control over the radio's receive state is needed to implement features like true Class C that require minimizing any potential non-listening periods, beyond what high-level library functions might guarantee.
 *   **Example (or link to example code):** See `lorawan_helper_enable_class_c_receive()` and the Class C handling within `lorawan_helper_loop()` in `lib/LoRaWANHelper/LoRaWANHelper.cpp`.
+
+### Pattern D: Direct Hardware Library Usage (esp_dmx)
+
+*   **Description:** For DMX control, the project now uses the esp_dmx library directly instead of through a wrapper, providing more direct access to the hardware capabilities while maintaining a clean API for the application.
+*   **When to Use:** When the underlying library is well-designed and the abstraction layer adds unnecessary complexity.
+*   **Example (or link to example code):** See the implementation in `lib/DMXHelper/DMXHelper.cpp`.
 
 ## API Specifications
 
