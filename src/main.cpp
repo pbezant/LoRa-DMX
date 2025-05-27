@@ -9,6 +9,12 @@
 #include "LEDHelper.h"         // Now in lib/
 #include <ArduinoJson.h>
 
+// Comment out this line to run the main application
+// #define RUN_SX1262_TEST
+
+#ifndef RUN_SX1262_TEST
+// --- MAIN APPLICATION ---
+
 #define LED_PIN 25
 
 // --- Configuration ---
@@ -127,4 +133,6 @@ void loop() {
 
     delay(5); // Small delay
 }
+
+#endif // RUN_SX1262_TEST
 

@@ -93,6 +93,9 @@ void lorawan_helper_process_pending_downlink(Print* debug_print); // Added debug
 
 // --- End True Class C Specifics ---
 
+// Function declarations
+bool lorawan_helper_check_class_c(Print* debug_print);
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif 
