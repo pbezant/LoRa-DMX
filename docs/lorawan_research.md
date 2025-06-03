@@ -128,3 +128,51 @@ The immediate next step is to thoroughly examine the examples provided with the 
 1.  A specific pattern for initializing and using `LoRaWANNode` in Class C that enables more responsive downlink handling.
 2.  Use of lower-level RadioLib APIs to achieve continuous listen and event-driven downlinks for Class C, potentially bypassing or supplementing the `LoRaWANNode::sendReceive` polling pattern.
 3.  If examples don't reveal a clear path, alternative strategies like a carefully managed polling uplink or even subclassing `LoRaWANNode` (if virtual methods for event handling exist but are not obvious) would need to be considered. 
+
+## Additional LoRaWAN Class C Examples (2024 Update)
+
+Based on our latest research, we've found several additional examples of Class C implementations that might be useful:
+
+### 1. RadioLib LoRaWAN Implementation
+The official RadioLib library has comprehensive LoRaWAN support, including Class C operation. Their approach uses:
+- Standard uplink/downlink with `sendReceive()`
+- Setting device class via configuration
+- Using the same API for both Class A and Class C devices
+
+While the library supports Class C operation, the API doesn't expose a direct asynchronous downlink callback mechanism. Instead, you need to:
+- Call a method like `sendReceive()` or similar to check for pending downlinks
+- Build a polling mechanism around this API
+- Implement your own state management for asynchronous operation
+
+### 2. GereZoltan/LoRaWAN MicroPython Implementation
+This repository contains a complete MicroPython LoRaWAN implementation for SX1262:
+- Includes full Class C support with continuous receive mode
+- Uses interrupt-based downlink detection
+- Implements callback mechanism for asynchronous downlink processing
+- The code could be ported to C++ for our ESP32 environment
+
+### 3. nopnop2002 Libraries
+Two libraries from nopnop2002 provide well-documented examples for our specific hardware:
+- **esp-idf-sx126x**: ESP-IDF native driver for SX1262/SX1268/LLCC68
+- **Arduino-LoRa-Ra01S**: Arduino library specifically for Ra-01S/Ra-01SH modules
+
+These examples focus on the hardware specifics of the SX1262 chip and might provide better compatibility with our Heltec board than the generic RadioLib implementation.
+
+### 4. EBYTE Module Examples
+The examples for EBYTE modules with SX1262 show that some chips require explicit use of TXEN and RXEN pins that need to be separately controlled. This might be relevant to our implementation as well.
+
+## Proposed Architecture for Our Class C Implementation
+
+Based on our findings, here's a proposed approach for implementing a robust Class C device:
+
+1. **Base Layer**: Use RadioLib's LoRaWAN implementation or nopnop2002's library as the foundation
+2. **Extension Layer**: 
+   - Implement an interrupt-driven receive mechanism similar to GereZoltan's approach
+   - Add a dedicated thread or task for monitoring downlinks
+   - Implement a callback system for processing received data
+3. **Application Layer**:
+   - Provide a simple API for sending uplinks and registering downlink handlers
+   - Handle session persistence using ESP32's non-volatile storage
+   - Implement proper error handling and recovery mechanisms
+
+This approach would combine the best aspects of the various implementations we've found, while addressing the specific requirements of a Class C device. 

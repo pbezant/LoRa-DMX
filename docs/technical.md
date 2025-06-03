@@ -60,64 +60,378 @@
 
 # Technical Specifications and Established Patterns
 
-This document details technical specifications for various aspects of the project and outlines established coding patterns and practices.
+This document provides technical details about the LoRa-DMX project, including its technology stack, patterns, hardware specifications, and implementation notes.
 
-## Coding Standards
+## Technology Stack
 
-*   **Language Version(s):** C++ (Arduino flavor, typically based on a recent C++ standard like C++11 or C++17 depending on ESP-IDF version used by PlatformIO for ESP32)
-*   **Linting & Formatting:** (Not explicitly defined in `platformio.ini`, but PlatformIO can integrate with tools like ClangFormat. Assume default or user-configured.)
-*   **Naming Conventions:** (Likely Arduino/C++ conventions, e.g., camelCase for functions/variables, PascalCase for classes/structs, UPPER_CASE for constants/macros. To be confirmed by inspecting source code.)
+### Hardware
+- **Board:** Heltec WiFi LoRa 32 V3.2
+- **Processor:** ESP32-S3
+- **LoRa Module:** SX1262 on-board chip
+- **DMX Interface:** Custom DMX transceiver circuit (output only)
 
-## Established Patterns
+### Software and Libraries
+- **Framework:** Arduino for ESP32
+- **Build System:** PlatformIO
+- **LoRaWAN Stack:** RadioLib v7.1.2 + nopnop2002's SX1262 driver
+- **DMX Library:** esp_dmx
+- **JSON Parsing:** ArduinoJson
+- **LoRaWAN Network Server:** Chirpstack/TTN
 
-### Pattern A: Wrapper Libraries for Hardware Abstraction
+## Library Versions and Dependencies
 
-*   **Description:** Custom libraries (`LoRaWANHelper.cpp`, `DMXHelper.cpp`) are used to simplify interaction with underlying hardware/communication libraries (`RadioLib`, `esp_dmx`). This provides a cleaner API for the main application logic and encapsulates hardware-specific details. `LoRaWANHelper.cpp` has been extensively refactored for RadioLib v7.x, while `DMXHelper.cpp` now uses the esp_dmx library directly instead of through a wrapper.
-*   **When to Use:** When interacting with complex external libraries or hardware peripherals to provide a simplified and project-specific interface.
-*   **Example (or link to example code):**
+- **RadioLib:** v7.1.2
+  - Used for LoRaWAN protocol handling
+  - Required for uplink/downlink support, OTAA joins
+  - Breaking changes in v7.x from previous versions required refactoring
+
+- **nopnop2002 SX1262 Driver:**
+  - Used for direct hardware control of the SX1262 radio chip
+  - Provides better bandwidth compatibility and hardware access
+  - Integrated with RadioLib's LoRaWAN stack for a hybrid solution
+
+- **ArduinoJson:** v6.x
+  - Used for parsing JSON commands from LoRaWAN downlinks
+  - Formats data for uplinks
+
+- **esp_dmx:**
+  - Used for controlling DMX fixtures
+  - Handles DMX protocol timing and electrical specifications
+  - Replaces the deprecated DmxController library
+
+## Architecture and Implementation Patterns
+
+### Overall Architecture
+The system follows a modular design with clear separation of concerns:
+
+1. **Main Application (src/main.cpp):**
+   - Initializes hardware components (LoRa, DMX)
+   - Sets up LoRaWAN connection
+   - Handles downlink command processing
+   - Manages periodic uplinks
+   - Coordinates between LoRaWAN and DMX subsystems
+
+2. **LoRaWAN Helper (lib/LoRaWANHelper):**
+   - Abstracts LoRaWAN connectivity details
+   - Handles device EUI and key management
+   - Manages OTAA join process
+   - Provides send/receive functions
+   - Implements Class C continuous reception
+
+3. **DMX Helper (lib/DMXHelper):**
+   - Abstracts DMX protocol details
+   - Manages DMX universe and fixtures
+   - Handles DMX data buffer and transmission
+   - Provides fixture control functions
+   - Implements lighting patterns and effects
+
+### LoRaWAN Implementation Architecture
+
+#### Current Approach (To Be Replaced)
+```
+[RadioLib] <-- [LoRaWANHelper] <-- [main.cpp]
+   ^
+   |
+[SX1262 Hardware]
+```
+
+#### New Hybrid Approach with nopnop2002 Driver (Adopted June 2024)
+```
+            [RadioLib LoRaWAN Stack]
+                     ^
+                     |
+[nopnop2002 SX1262 Driver] <-- [Integration Layer] <-- [LoRaWANHelper] <-- [main.cpp]
+            ^
+            |
+    [SX1262 Hardware]
+```
+
+This hybrid approach, which we have officially adopted after extensive evaluation:
+1. Uses nopnop2002's driver for direct hardware access to the SX1262 chip
+2. Uses RadioLib for LoRaWAN protocol handling
+3. Creates a clean integration layer that maintains API compatibility
+4. Implements proper interrupt handling for true Class C operation
+5. Provides bandwidth detection and fallback mechanisms for hardware compatibility
+
+Key advantages of this approach:
+- Better hardware compatibility with our specific SX1262 chip implementation
+- More reliable interrupt-driven Class C downlink reception
+- Direct control over radio parameters for continuous reception
+- Cleaner separation of hardware and protocol concerns
+- Proven success with the same hardware in other projects
+
+### Class C Implementation
+The system is designed to operate as a LoRaWAN Class C device, which means:
+
+1. **Continuous Receive:** The device listens continuously for downlinks when not transmitting
+2. **Interrupt-Driven Reception:** Uses hardware interrupts on DIO1 pin to detect incoming packets
+3. **Low Latency:** Processes downlink commands immediately upon reception
+4. **High Power Consumption:** Requires continuous power (non-battery operation)
+
+The Class C implementation with nopnop2002's driver will follow these steps:
+1. Initialize the SX1262 radio using nopnop2002's driver
+2. Configure RadioLib's LoRaWAN stack with the initialized radio
+3. Perform OTAA join using device credentials
+4. Configure continuous reception using nopnop2002's direct radio functions
+5. Set up an interrupt handler for the DIO1 pin
+6. Process packets in the interrupt context or flag them for main loop processing
+7. Re-enable continuous reception after each uplink and received packet
+
+### DMX Implementation
+The DMX subsystem:
+
+1. Initializes the DMX port and pins using esp_dmx
+2. Maintains a buffer with the current state of all DMX channels (512 max)
+3. Updates fixtures by writing to the appropriate channels in the buffer
+4. Transmits the entire DMX universe at regular intervals
+5. Implements patterns and effects by modifying fixture channel values over time
+
+### JSON Command Format
+Commands received via LoRaWAN downlinks use JSON format:
+
+```json
+{
+  "cmd": "set_fixture",
+  "fixture": 1,
+  "address": 1,
+  "channels": [255, 0, 0, 0]
+}
+```
+
+Supported commands:
+- `set_fixture`: Set specific fixture channels
+- `set_dmx`: Set raw DMX channel values
+- `run_pattern`: Activate a pre-defined pattern
+- `stop_pattern`: Stop the current pattern
+
+## Pin Assignments
+
+### LoRa (SX1262) Pins
+- NSS: GPIO_NUM_8
+- DIO1: GPIO_NUM_14
+- NRST: GPIO_NUM_12
+- BUSY: GPIO_NUM_13
+
+### DMX Pins
+- DMX_TX: GPIO_NUM_17
+- DMX_RX: GPIO_NUM_18 (not used in this application)
+- DMX_DE: GPIO_NUM_16 (data enable)
+
+## File Structure
+
+```
+LoRa-DMX/
+├── include/
+│   └── secrets.h            # LoRaWAN credentials (not in repo)
+├── lib/
+│   ├── DMXHelper/           # DMX control library
+│   │   ├── DMXHelper.cpp
+│   │   └── DMXHelper.h
+│   ├── LEDHelper/           # LED indicator library
+│   │   ├── LEDHelper.cpp
+│   │   └── LEDHelper.h
+│   └── LoRaWANHelper/       # LoRaWAN connectivity library
+│       ├── LoRaWANHelper.cpp
+│       └── LoRaWANHelper.h
+├── src/
+│   └── main.cpp             # Main application
+└── platformio.ini           # PlatformIO configuration
+```
+
+## Implementation Patterns
+
+### Callback-Based Architecture
+The project uses callbacks to handle asynchronous events:
+
+```cpp
+// Register a callback for LoRaWAN downlinks
+lorawan_helper_init(radio, &Serial, 300000, process_downlink_callback);
+
+// Downlink callback implementation
+void process_downlink_callback(uint8_t* buffer, uint8_t length, int16_t rssi, float snr) {
+  // Process the received data
+}
+```
+
+### Hardware Abstraction
+Each subsystem is abstracted behind a helper library with a clean interface:
+
+```cpp
+// LoRaWAN abstraction
+lorawan_helper_init(...);
+lorawan_helper_join();
+lorawan_helper_send(...);
+lorawan_helper_loop();
+
+// DMX abstraction
+dmx_helper_init(...);
+dmx_helper_set_fixture_channels(...);
+dmx_helper_run_pattern(...);
+```
+
+## Planned Implementation for nopnop2002 Driver + RadioLib Integration
+
+### Integration Layer Design
+
+The integration between nopnop2002's SX1262 driver and RadioLib's LoRaWAN stack will follow this architecture:
+
+```cpp
+// Radio hardware layer (nopnop2002 driver)
+class SX1262Radio {
+private:
+  // nopnop2002 driver instance
+  SX1262* radio;
+  // Hardware pins and configuration
+  
+public:
+  // Initialize radio hardware
+  bool begin();
+  // Low-level radio functions (used by RadioLib)
+  int16_t transmit(uint8_t* data, size_t len);
+  int16_t receive(uint8_t* data, size_t len);
+  int16_t startReceive();
+  // Interrupt handling
+  void setDio1Action(void (*func)(void));
+  // Radio configuration
+  int16_t setBandwidth(float bw);
+  int16_t setFrequency(float freq);
+  // Other hardware-specific functions
+};
+
+// Protocol layer (RadioLib LoRaWAN)
+class LoRaWANProtocol {
+private:
+  // RadioLib LoRaWANNode instance
+  RadioLib::LoRaWANNode* node;
+  // SX1262Radio instance for hardware control
+  SX1262Radio* radio;
+  
+public:
+  // Initialize LoRaWAN stack with our hardware abstraction
+  bool begin(SX1262Radio* radio);
+  // LoRaWAN protocol functions
+  bool joinOTAA(uint64_t joinEUI, uint64_t devEUI, uint8_t* nwkKey, uint8_t* appKey);
+  bool send(uint8_t* data, size_t len, bool confirmed = false);
+  // Class C management
+  bool enableClassC();
+  void processDownlink();
+};
+
+// Public API (LoRaWANHelper)
+// This maintains compatibility with existing application code
+```
+
+### Class C Implementation Details
+
+The true Class C implementation with nopnop2002's driver will include:
+
+1. **Hardware Interrupt Handling:**
+   ```cpp
+   // Set up DIO1 interrupt
+   pinMode(DIO1, INPUT);
+   attachInterrupt(digitalPinToInterrupt(DIO1), dio1_interrupt_handler, RISING);
+   
+   // Interrupt handler
+   void dio1_interrupt_handler(void) {
+     packet_received = true;
+   }
+   ```
+
+2. **Continuous Reception Configuration:**
     ```cpp
-    // Conceptual example based on README description
-    // LoRaManager lora;
-    // lora.joinNetwork(joinEUI, devEUI, appKey);
-    // if (lora.messageReceived()) { /* process message */ }
+   void enable_class_c_receive() {
+     // Configure radio for RX2 parameters
+     radio->setFrequency(RX2_FREQUENCY);
+     radio->setSpreadingFactor(RX2_SF);
+     radio->setBandwidth(RX2_BANDWIDTH);
+     
+     // Start continuous reception
+     radio->startReceive();
+   }
+   ```
 
-    // Using DMXHelper
-    dmx_helper_init();
-    dmx_helper_set_fixture_channels(1, channelValues, 4);
-    dmx_helper_update();
-    ```
+3. **Downlink Processing:**
+   ```cpp
+   void loop() {
+     if (packet_received) {
+       packet_received = false;
+       
+       // Read packet data
+       uint8_t data[256];
+       size_t len = radio->readData(data, 256);
+       
+       // Process with RadioLib LoRaWAN stack
+       node->processDownlink(data, len);
+       
+       // Get application data
+       uint8_t appData[256];
+       size_t appLen = node->getAppData(appData, 256);
+       
+       // Call user callback if data available
+       if (appLen > 0 && downlink_callback) {
+         downlink_callback(appData, appLen, radio->getRSSI(), radio->getSNR());
+       }
+       
+       // Re-enable continuous reception
+       enable_class_c_receive();
+     }
+   }
+   ```
 
-### Pattern B: JSON for Dynamic Configuration/Commands
+### Bandwidth Compatibility
 
-*   **Description:** JSON payloads received over LoRaWAN are parsed to dynamically control DMX fixtures. This avoids hardcoding fixture settings and allows flexible remote configuration.
-*   **When to Use:** For sending structured data or commands to the device, especially when the parameters can vary.
-*   **Example (or link to example code):** 
-    ```json
-    // Example JSON command to set a fixture
-    {"cmd":"set","addr":1,"values":[255,0,0,0]}
-    
-    // Example JSON command to start a pattern
-    {"cmd":"rainbow","speed":50,"cycles":0}
-    ```
+The implementation will include bandwidth detection and fallback:
 
-### Pattern C: Direct Radio Management for Custom True Class C Behavior
+```cpp
+bool test_bandwidth(float bw) {
+  int16_t state = radio->setBandwidth(bw);
+  return (state == RADIOLIB_ERR_NONE);
+}
 
-*   **Description:** To achieve immediate and continuous LoRaWAN Class C reception, the `SX1262` radio is managed directly by `LoRaWANHelper.cpp` rather than solely relying on `RadioLib::LoRaWANNode::loop()` for downlink opportunities. This involves:
-    *   Obtaining RX2 parameters (frequency, data rate) from the `LoRaWANNode`.
-    *   Converting LoRaWAN data rates to radio-specific Spreading Factor (SF) and Bandwidth (BW).
-    *   Configuring the `SX1262` with these parameters, plus sync word and coding rate.
-    *   Setting up a hardware interrupt (ISR) on the radio's DIO1 pin for the `RX_DONE` event.
-    *   In the main loop, checking a flag set by this ISR, then reading the packet directly from the radio using `sx1262_radio->readData()`.
-    *   The raw packet is then passed to `node->parseDownlink()` for the LoRaWAN stack to process.
-    *   The radio is explicitly re-enabled for continuous reception after every uplink and after processing any received downlink.
-*   **When to Use:** When precise control over the radio's receive state is needed to implement features like true Class C that require minimizing any potential non-listening periods, beyond what high-level library functions might guarantee.
-*   **Example (or link to example code):** See `lorawan_helper_enable_class_c_receive()` and the Class C handling within `lorawan_helper_loop()` in `lib/LoRaWANHelper/LoRaWANHelper.cpp`.
+bool initialize_radio() {
+  // Try different bandwidths in order of preference
+  float bandwidths[] = {125.0, 250.0, 500.0, 62.5, 31.25, 15.625, 7.8};
+  for (int i = 0; i < 7; i++) {
+    if (test_bandwidth(bandwidths[i])) {
+      Serial.printf("Bandwidth %.3f kHz is supported\n", bandwidths[i]);
+      supported_bandwidths.push_back(bandwidths[i]);
+    }
+  }
+  
+  // Configure with best supported bandwidth
+  if (supported_bandwidths.size() > 0) {
+    radio->setBandwidth(supported_bandwidths[0]);
+    return true;
+  }
+  
+  return false;
+}
+```
 
-### Pattern D: Direct Hardware Library Usage (esp_dmx)
+### Bandwidth Testing Results (June 2024)
 
-*   **Description:** For DMX control, the project now uses the esp_dmx library directly instead of through a wrapper, providing more direct access to the hardware capabilities while maintaining a clean API for the application.
-*   **When to Use:** When the underlying library is well-designed and the abstraction layer adds unnecessary complexity.
-*   **Example (or link to example code):** See the implementation in `lib/DMXHelper/DMXHelper.cpp`.
+Based on our comprehensive testing using the custom bandwidth testing tool (`examples/bandwidth_test/`), we have determined:
+
+1. **Supported Bandwidths on Our SX1262**:
+   - 7.8 kHz
+   - 15.6 kHz
+   - 31.25 kHz
+   - 62.5 kHz
+   - 125.0 kHz (critical for standard US915 operation)
+   - 250.0 kHz
+   - 500.0 kHz
+
+2. **Unsupported Bandwidths**:
+   - 10.4 kHz
+   - 20.8 kHz
+   - 41.7 kHz
+
+3. **Implementation Implications**:
+   - We will only attempt to use the supported bandwidths listed above
+   - For RX2 continuous reception in Class C, we'll use 125.0 kHz as it's both supported and standard
+   - Our bandwidth fallback mechanism will be refined to only try these specific values
+
+See `bandwidth_test_results.md` for detailed testing methodology and complete results.
 
 ## API Specifications
 

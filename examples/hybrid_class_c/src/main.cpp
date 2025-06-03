@@ -82,8 +82,8 @@ void setup() {
   
   // Start the radio with a longer delay to ensure proper initialization
   printState("Initializing radio");
-  radio->begin(RF_FREQUENCY, TX_OUTPUT_POWER, 1.6, true);
-  delay(2000);  // Increased delay after initialization
+  radio->begin(RF_FREQUENCY, TX_OUTPUT_POWER);
+  delay(1000);  // Longer delay after initialization
   
   // Setup DIO1 interrupt
   printState("Setting up DIO1 interrupt");
@@ -93,10 +93,10 @@ void setup() {
   // Configure with a single, basic configuration
   printState("Configuring LoRa parameters");
   
-  // Using the actual bandwidth values from Ra01S.h (0x07 is 125 kHz)
+  // Using the actual bandwidth values from Ra01S.h
   radio->LoRaConfig(
     LORA_SPREADING_FACTOR,
-    0x07,   // Use 125 kHz bandwidth (value 0x07 in Ra01S.h)
+    0x07,   // 125 kHz bandwidth for SX1262
     LORA_CODING_RATE,
     LORA_PREAMBLE_LENGTH,
     LORA_PAYLOAD_LENGTH,
@@ -157,21 +157,21 @@ void loop() {
     
     // Initialize again
     printState("Re-initializing radio");
-    radio->begin(RF_FREQUENCY, TX_OUTPUT_POWER, 1.6, true);
-    delay(2000);  // Increased delay
+    radio->begin(RF_FREQUENCY, TX_OUTPUT_POWER);
+    delay(500);
     
     // Configure again
     printState("Re-configuring radio");
     radio->LoRaConfig(
       LORA_SPREADING_FACTOR,
-      0x07,  // 125 kHz bandwidth
+      0x07,
       LORA_CODING_RATE,
       LORA_PREAMBLE_LENGTH,
       LORA_PAYLOAD_LENGTH,
       true,
       false
     );
-    delay(2000);  // Increased delay
+    delay(500);
     
     printState("Sending message");
     Serial.printf("Sending: %s\n", message);
@@ -216,7 +216,7 @@ void loop() {
       // Null-terminate the data
       if (rxLen < sizeof(rxData)) {
         rxData[rxLen] = 0;
-            } else {
+      } else {
         rxData[sizeof(rxData) - 1] = 0;
       }
       
@@ -247,21 +247,20 @@ void loop() {
     
     // Initialize again
     printState("Re-initializing radio after receive");
-    radio->begin(RF_FREQUENCY, TX_OUTPUT_POWER, 1.6, true);
-    delay(2000);  // Increased delay
+    radio->begin(RF_FREQUENCY, TX_OUTPUT_POWER);
+    delay(500);
     
     // Configure again
     printState("Re-configuring radio after receive");
     radio->LoRaConfig(
-      LORA_SPREADING_FACTOR,
-      0x07,  // 125 kHz bandwidth
+      0x07,
       LORA_CODING_RATE,
       LORA_PREAMBLE_LENGTH,
       LORA_PAYLOAD_LENGTH,
       true,
       false
     );
-    delay(2000);  // Increased delay
+    delay(500);
     
     // Resume receiving
     printState("Resuming receive mode");
@@ -270,5 +269,4 @@ void loop() {
   
   // Small delay to prevent watchdog issues
   delay(10);
-}
-
+} 

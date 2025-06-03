@@ -1,135 +1,219 @@
-# RadioLib Class C Deep Dive for LoRaWANNode
+# RadioLib Class C Deep Dive
 
-## Objective
-Investigate the RadioLib library (specifically `SX1262.h/.cpp`, `Radio.h/.cpp`, and `protocols/LoRaWAN/LoRaWAN.h/.cpp`) to determine how to implement true, event-driven Class C downlink reception with the `LoRaWANNode` class. The goal is to achieve unsolicited downlink reception without relying on periodic uplinks (polling `sendReceive`).
+This document explores implementing LoRaWAN Class C devices using RadioLib and alternative libraries, with a focus on the Heltec WiFi LoRa 32 v3.2 board with SX1262 radio.
 
-This document will log findings, relevant code snippets, and potential strategies for extending or patching `LoRaWANNode` or creating a wrapper/derived class to support this functionality.
+## Background on Class C
 
-## Key Investigation Areas
+LoRaWAN has three device classes:
 
-1.  **RadioLib Core Receive Mechanisms (SX1262 & Generic Radio):
-    *   How is continuous receive mode initiated on the SX1262 (e.g., `startReceive()` with specific parameters)?
-    *   How are radio events (e.g., packet received, CRC error, header valid) signaled (DIO pins, status registers)?
-    *   How does RadioLib handle these events internally (interrupt service routines, polling mechanisms)?
-    *   What methods are available to read received packet data, RSSI, SNR, etc., at the raw radio level?
+1. **Class A**: Most power-efficient. Device only listens for downlinks briefly after sending an uplink.
+2. **Class B**: Medium power. Device listens periodically based on synchronized beacons.
+3. **Class C**: Highest power consumption. Device listens continuously when not transmitting.
 
-2.  **LoRaWANNode Interaction with RadioLib:
-    *   How does `LoRaWANNode::sendReceive()` utilize the underlying radio's send and receive capabilities?
-    *   How does `LoRaWANNode::activateOTAA()` manage the radio state during and after join?
-    *   Are there any existing (perhaps private or protected) methods within `LoRaWANNode` that hint at asynchronous event handling or a different receive path?
+Class C devices are ideal for applications that need to receive commands or data from the server at any time, with minimal latency.
 
-3.  **LoRaWAN MAC Layer Processing in RadioLib:
-    *   Once a packet is physically received by the radio, how does `LoRaWANNode` (or its internal helpers) perform MAC layer processing (decryption, MIC check, frame counter validation, port handling)?
-    *   Can these MAC processing steps be invoked independently of a `sendReceive()` call if we can get a raw packet from a continuous receive mode?
+## RadioLib's Class C Implementation
 
-4.  **Potential Strategies for True Class C with LoRaWANNode:
-    *   **Strategy A: External Continuous Receive + Internal MAC Processing**
-        *   Use low-level RadioLib calls to put the SX1262 into continuous receive after a successful LoRaWAN join.
-        *   On radio interrupt/event indicating a packet, read the raw packet.
-        *   Find a way to feed this raw packet into the `LoRaWANNode`'s existing MAC processing logic to get a validated and decrypted LoRaWAN downlink payload.
-        *   Trigger a user-defined callback with this payload.
-    *   **Strategy B: Extending/Modifying LoRaWANNode**
-        *   Identify if `LoRaWANNode` can be subclassed and have its receive logic overridden or extended.
-        *   Consider modifications to `LoRaWANNode` itself to add a `startContinuousReceive(callback)` method that manages the radio state and internal processing for Class C.
-    *   **Strategy C: Direct RadioLib LoRaWAN Stack Usage (If LoRaWANNode is too restrictive)**
-        *   If `LoRaWANNode` proves too difficult to adapt, explore using the LoRaWAN protocol implementation within RadioLib more directly, though this would lose the convenience of `LoRaWAN_ESP32` for provisioning if not carefully integrated.
+### How RadioLib Handles Class C
 
-## Log & Findings
+RadioLib v7.x implements Class C in `LoRaWANNode` by:
 
-*(This section will be populated as research progresses)*
+1. Setting device class via `setDeviceClass(RADIOLIB_LORAWAN_CLASS_C)`
+2. Using continuous receive mode after join completion
+3. Handling downlinks through the `sendReceive()` method
 
----
-Date: 2024-07-29
-Focus: Initial review of `RadioLib/src/modules/SX126x/SX126x.h` for core receive mechanisms.
+The primary challenge is that RadioLib's API doesn't provide a native asynchronous callback mechanism for downlinks in Class C mode. Instead, the device periodically checks for messages.
 
-Findings:
+### RadioLib Class C Limitations
 
-*   **Continuous Receive Initiation:** The method `startReceive(uint32_t timeout, RadioLibIrqFlags_t irqFlags, RadioLibIrqFlags_t irqMask, size_t len)` (line ~716) appears to be the primary function to put the radio into receive mode.
-    *   Setting `timeout` to `RADIOLIB_SX126X_RX_TIMEOUT_INF` (defined as `0xFFFFFF` in constants related to `RADIOLIB_SX126X_CMD_SET_RX`) enables continuous receive mode. This is key for Class C.
-*   **Interrupt Handling (DIO1):**
-    *   `setDio1Action(void (*func)(void))` (line ~637): Attaches a user-defined ISR to the DIO1 pin.
-    *   This ISR will be triggered when radio events (configured via `irqFlags` in `startReceive`) occur.
-*   **Reading Received Data:**
-    *   `readData(uint8_t* data, size_t len)` (line ~756): Called after an `RxDone` interrupt to retrieve the packet from the radio's buffer.
-    *   `getPacketLength(bool update = true)` (line ~1008): Used to determine the length of the received packet.
-*   **IRQ Management:**
-    *   `getIrqStatus()` or `getIrqFlags()` (line ~1050, needs clarification on which is preferred for SX126x): Called within the ISR to determine the specific radio event(s) that triggered the interrupt (e.g., `RxDone`, `RxTimeout`, `CrcError`).
-    *   `clearIrqStatus(uint16_t clearIrqParams)` (line ~1246): **Crucial.** Must be called within the ISR after processing an event to clear the radio's IRQ flags and allow further interrupts.
-    *   `setDioIrqParams(uint16_t irqMask, uint16_t dio1Mask, ...)` (line ~1245): Configures which internal SX126x IRQ sources are routed to the DIO pins. `startReceive` likely uses this to set up DIO1 for `RxDone`, `PreambleDetected`, etc.
-*   **Relevant IRQ Flags (Constants to be confirmed, likely `RADIOLIB_SX126X_IRQ_...`):
-    *   `RxDone`: Packet successfully received with good CRC.
-    *   `PreambleDetected`: Preamble detected (can be used for early wake-up or activity detection).
-    *   `RxTimeout`: Configured receive timeout occurred before packet reception.
-    *   `CrcError`: Packet received, but CRC check failed.
+1. **No Asynchronous Event Model**: No direct way to register a callback for downlinks
+2. **Polling Required**: Must periodically call `sendReceive()` to check for downlinks
+3. **No Interrupt Support**: Doesn't use interrupts for downlink detection in the public API
+4. **Limited Documentation**: Few examples showing proper Class C implementation
 
-Relevant Code Snippets (`SX126x.h`):
+## Most Promising GitHub Examples
+
+We've identified the following repositories as the most promising for Class C implementation:
+
+### 1. nopnop2002/Arduino-LoRa-Ra01S
+
+**URL**: https://github.com/nopnop2002/Arduino-LoRa-Ra01S  
+**Relevance**: ★★★★★
+
+This library is specifically designed for Ra-01S/Ra-01SH modules, which use the same SX1262/1268 chips as the Heltec board. Key features:
+
+- Designed for the exact same radio chip (SX1262)
+- Compatible with RadioLib for communication
+- Includes examples for Arduino/ESP32
+- Has correct pin configurations for Heltec-like boards
+
+**Implementation Approach**:  
+The library doesn't directly implement LoRaWAN Class C, but it provides a solid foundation for controlling the SX1262 correctly. We could combine this with the RadioLib LoRaWAN stack to build a Class C device.
+
 ```cpp
-// To start continuous receive (conceptual)
-// radio.startReceive(RADIOLIB_SX126X_RX_TIMEOUT_INF, RADIOLIB_SX126X_IRQ_RX_DONE | RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED, ...);
+// Example modification to use with Heltec board
+SX126x lora(5,     // NSS
+            6,     // RESET
+            7,     // BUSY
+            8,     // TXEN (may not be needed)
+            9      // RXEN (may not be needed)
+           );
 
-// Inside DIO1 ISR
-// void dio1_isr() {
-//   uint16_t irqFlags = radio.getIrqStatus(); // or getIrqFlags()
-//   radio.clearIrqStatus(irqFlags);
-//   if(irqFlags & RADIOLIB_SX126X_IRQ_RX_DONE) {
-//     size_t len = radio.getPacketLength();
-//     uint8_t buffer[len];
-//     radio.readData(buffer, len);
-//     // Process buffer (this is where LoRaWAN MAC processing needs to happen)
-//   }
-// }
+// Initialize with proper frequency
+int16_t ret = lora.begin(915.0,        // frequency in MHz (US915)
+                         20,           // tx power in dBm
+                         3.3,          // use TCXO voltage if needed
+                         true);        // use DCDC converter
 ```
 
-Potential Next Steps:
-1.  Examine `SX126x.cpp` to see the SPI command sequences for `startReceive` (especially with `RX_TIMEOUT_INF`) and `setDioIrqParams`.
-2.  Investigate how `LoRaWANNode` uses `startReceive` for its RX1/RX2 windows to understand its expectations of radio configuration.
-3.  Determine the exact names and values for `RADIOLIB_SX126X_IRQ_...` flags.
-4.  Start formulating how to pass raw received packets to the LoRaWAN MAC processing layers.
+### 2. GereZoltan/LoRaWAN
 
----
-Date: 2024-07-29
-Focus: Bridging low-level SX126x receive to `LoRaWANNode` MAC processing.
+**URL**: https://github.com/GereZoltan/LoRaWAN  
+**Relevance**: ★★★★☆
 
-Key LoRaWAN.cpp functions:
-*   `LoRaWANNode::sendReceive(...)`: Main public API for uplink/downlink. Calls `receiveCommon`.
-*   `LoRaWANNode::receiveCommon(...)`: Manages RX1/RX2 window timing and radio setup for these windows. Uses a static ISR (`LoRaWANNodeOnDownlinkAction`) to set a flag (`downlinkAction`) if any radio IRQ occurs during a window. It *does not* read or parse the packet itself.
-*   `LoRaWANNode::parseDownlink(uint8_t* data, size_t* len, LoRaWANEvent_t* event)`: This is the core MAC processing function.
-    *   It calls `this->phyLayer->getPacketLength()` to get the size of the packet in the radio FIFO.
-    *   It calls `this->phyLayer->readData(...)` to read the raw bytes from the radio FIFO.
-    *   It then performs all LoRaWAN MAC operations: DevAddr check, FCnt validation, MIC check, decryption (NwkSKey/AppSKey), and extracts FPort, FOpts, and application payload.
-    *   Crucially, `parseDownlink` appears self-contained and expects the radio to have a packet ready in its FIFO. It does not depend on `receiveCommon`'s timing logic directly for its parsing actions.
+A complete MicroPython LoRaWAN implementation for SX1262 that includes Class C functionality:
 
-This confirms that if we can put the radio into continuous receive mode and an interrupt signals a packet, we should be able to call `node->parseDownlink()` to process it.
+- Full interrupt-driven Class C implementation
+- Uses callback mechanism for downlink processing
+- Works with SX1262 chip
+- Well-structured, modular code
 
-## Grand Plan for True Class C Implementation
+While in MicroPython, the architecture and approach could be ported to C++ for our project.
 
-1.  **Initial LoRaWAN Join:**
-    *   Use `node->activateOTAA()` as normal to join the network. This establishes session keys, DevAddr, FCnts, and RX2 settings within the `node` object.
+**Key Class C Implementation Concepts**:
+```python
+# From GereZoltan/LoRaWAN
+def process_downlink(self, data):
+    # Process downlink data when received
+    # This is called from an interrupt handler
 
-2.  **Switch to Continuous Class C Receive Mode (e.g., in a `lorawan_helper_enable_class_c_receive()` function):**
-    *   Retrieve the `SX1262` radio object (global `radio` from `heltec_unofficial`).
-    *   Get RX2 channel parameters (`node->channels[RADIOLIB_LORAWAN_DIR_RX2]`) and convert data rate to SF/BW/CR.
-    *   Configure the `radio` directly with these RX2 LoRa parameters (frequency, SF, BW, CR, LoRaWAN sync word, preamble length).
-    *   Set a custom DIO1 ISR: `radio->setDio1Action(our_custom_class_c_isr);`
-    *   Start continuous receive on the radio: `radio->startReceive(RADIOLIB_SX126X_RX_TIMEOUT_INF, RADIOLIB_SX126X_IRQ_RX_DONE, RADIOLIB_SX126X_IRQ_RX_DONE);`
-    *   Set a state flag, e.g., `is_class_c_mode_active = true;`
+def enable_class_c(self):
+    # Configure continuous receive mode
+    self.radio.set_rx_continuous()
+    # Set up interrupt handler
+    self.radio.on_rx_done(self._handle_rx_done)
+```
 
-3.  **Custom ISR (`our_custom_class_c_isr()`):**
-    *   `irqFlags = radio.getIrqFlags();`
-    *   `radio.clearIrqStatus(irqFlags);`
-    *   If `(irqFlags & RADIOLIB_SX126X_IRQ_RX_DONE)`:
-        *   Set a global flag: `pending_lorawan_packet_for_processing = true;`
-        *   Do NOT read the packet from the radio here.
+### 3. nopnop2002/esp-idf-sx126x
 
-4.  **Main Loop (`loop()` in `main.cpp`):**
-    *   If `pending_lorawan_packet_for_processing` is true:
-        *   `pending_lorawan_packet_for_processing = false;`
-        *   Call a processing function, e.g., `lorawan_helper_process_class_c_downlink()`.
-        *   **Inside `lorawan_helper_process_class_c_downlink()`:**
-            *   Declare buffers for `app_payload`, `app_payload_len`, `event_data`.
-            *   Call `int16_t parse_status = node->parseDownlink(app_payload, &app_payload_len, &event_data);`
-            *   If `parse_status == RADIOLIB_ERR_NONE` and `app_payload_len > 0`, pass the payload to the user's registered downlink callback.
-            *   Handle any errors from `parse_status`.
-            *   **Crucially, re-arm continuous receive:** `radio->startReceive(RADIOLIB_SX126X_RX_TIMEOUT_INF, RADIOLIB_SX126X_IRQ_RX_DONE, RADIOLIB_SX126X_IRQ_RX_DONE);` (if `is_class_c_mode_active` is still true). This is because `parseDownlink` (via `phyLayer->readData`) will have cleared the radio's FIFO and likely taken it out of RX mode.
+**URL**: https://github.com/nopnop2002/esp-idf-sx126x  
+**Relevance**: ★★★★☆
 
-This approach leverages `LoRaWANNode` for MAC complexities while managing the radio directly for continuous Class C reception. 
+ESP-IDF native driver for SX1262/SX1268/LLCC68:
+
+- Native ESP32 implementation
+- Well-documented SX1262 configuration
+- Includes ping-pong and socket examples
+- Handles low-level radio configuration properly
+
+This repository shows how to correctly configure the SX1262 on ESP32, especially regarding bandwidth settings, which could help with our INVALID_BANDWIDTH error.
+
+**Relevant Code Snippet**:
+```c
+// From nopnop2002/esp-idf-sx126x
+// Try different bandwidths to find one that works
+float test_bandwidths[] = {125.0, 250.0, 500.0, 62.5, 31.25, 41.7, 20.8};
+bool found_valid_bw = false;
+float working_bw = 0;
+
+for (int i = 0; i < 7; i++) {
+    ESP_LOGI(TAG, "Testing bandwidth %.2f kHz...", test_bandwidths[i]);
+    state = sx1262_radio->setBandwidth(test_bandwidths[i]);
+    if (state == RADIOLIB_ERR_NONE) {
+        found_valid_bw = true;
+        working_bw = test_bandwidths[i];
+        ESP_LOGI(TAG, "Success! Radio supports %.2f kHz bandwidth.", working_bw);
+        break;
+    }
+}
+```
+
+### 4. ropg/heltec_esp32_lora_v3 + LoRaWAN_ESP32
+
+**URL**: https://github.com/ropg/heltec_esp32_lora_v3  
+**Relevance**: ★★★★☆
+
+Unofficial library specifically for Heltec ESP32 LoRa v3 boards:
+
+- Targets the exact same Heltec v3 board
+- Uses RadioLib for LoRa functionality
+- Includes companion LoRaWAN_ESP32 library for provisioning and session state
+
+This library is designed for our exact hardware, though its Class C support relies on the underlying RadioLib implementation.
+
+## Recommended Implementation Approach
+
+Based on our research, here's the recommended approach for implementing a Class C device:
+
+### 1. Try nopnop2002/Arduino-LoRa-Ra01S First
+
+This library is most likely to work with our hardware since it's specifically designed for the same SX1262 chip. Steps to try:
+
+1. Clone the repository
+2. Install it as an Arduino library
+3. Try the basic examples to verify radio functionality
+4. Adapt their initialization code to our project
+5. Layer on RadioLib's LoRaWAN stack for Class C functionality
+
+### 2. Custom Class C Implementation
+
+If using RadioLib directly, implement a custom Class C solution:
+
+```cpp
+// Class C implementation using RadioLib
+void setup_class_c() {
+    // Join the network first
+    join_lorawan_network();
+    
+    // Configure for Class C
+    lora_node.setDeviceClass(RADIOLIB_LORAWAN_CLASS_C);
+    
+    // Start a background task for checking downlinks
+    xTaskCreate(downlink_task, "downlink_task", 4096, NULL, 5, NULL);
+}
+
+void downlink_task(void* pvParameters) {
+    uint8_t downlink_buffer[256];
+    size_t downlink_len = 0;
+    
+    while(1) {
+        // Check for downlinks periodically
+        int state = lora_node.receivePacket(downlink_buffer, &downlink_len);
+        if(state == RADIOLIB_ERR_NONE && downlink_len > 0) {
+            // Process downlink
+            process_downlink(downlink_buffer, downlink_len);
+        }
+        
+        // Short delay to prevent hogging CPU
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+}
+```
+
+### 3. Alternative Frequency/Bandwidth Settings
+
+If the US915 band with standard bandwidth settings doesn't work, try:
+
+1. Using a different bandwidth within the US915 band
+2. Testing with the bandwidth detection code from nopnop2002/esp-idf-sx126x
+3. Creating a custom band definition with compatible bandwidth settings
+
+```cpp
+// Test different bandwidths
+float bandwidths[] = {125.0, 250.0, 500.0, 62.5, 31.25, 41.7, 20.8};
+for (int i = 0; i < sizeof(bandwidths)/sizeof(float); i++) {
+    Serial.printf("Testing bandwidth %.1f kHz... ", bandwidths[i]);
+    int state = radio.setBandwidth(bandwidths[i]);
+    if (state == RADIOLIB_ERR_NONE) {
+        Serial.println("SUCCESS");
+    } else {
+        Serial.printf("FAILED (Error: %d)\n", state);
+    }
+}
+```
+
+## Conclusion
+
+Class C implementation is possible with RadioLib and SX1262, but may require custom code to handle the continuous receive mode properly. The nopnop2002/Arduino-LoRa-Ra01S library appears to be the most promising starting point due to its specific support for our hardware.
+
+For bandwidth issues, testing different values and implementing fallback options as shown in nopnop2002/esp-idf-sx126x should help overcome the INVALID_BANDWIDTH error. 

@@ -12,6 +12,8 @@
 // Project-specific headers
 #include "../../include/secrets.h" // For LORAWAN_DEVICE_EUI, etc. - CRITICAL for lorawan_helper_join
 #include "LoRaWANHelper.h"       // Our own header, includes LORAWAN_DOWNLINK_MAX_SIZE
+#include "../SX1262Radio/SX1262Radio.h"
+#include "../SX1262Radio/LoRaWANAdapter.h"
 
 // Pin definition needed from heltec_unofficial.h, since we can't include the whole file
 // GPIO_NUM_14 should be defined by Arduino/ESP32 core headers included via Arduino.h
@@ -27,10 +29,9 @@
 // --- Global Variables & Static Declarations ---
 // These can now use types fully defined by RadioLib.h and constants from secrets.h
 
-// RadioLib-specific globals
-LoRaWANNode* node = nullptr;
-SX1262* sx1262_radio = nullptr; // Pointer to the global radio from heltec_unofficial.h
-const LoRaWANBand_t* current_band = nullptr; // No RadioLib:: prefix for LoRaWANBand_t
+// Our new hardware and protocol layers
+static SX1262Radio* radio_hw = nullptr;
+static LoRaWANAdapter* lorawan_adapter = nullptr;
 
 // Internal state for LoRaWANHelper
 static bool joined_otaa = false; // Tracks OTAA join status specifically
@@ -76,134 +77,163 @@ static uint64_t eui_string_to_u64(const char* eui_str);
 // Helper to convert AppKey strings from secrets.h to byte array
 static void appkey_string_to_bytes(const char* appkey_str, uint8_t* output_array);
 
-// Internal downlink handler callback
-static void internal_downlink_cb(uint8_t port, const uint8_t* payload, size_t len);
+// Callback to handle downlink data from LoRaWANAdapter
+static void lorawan_rx_callback(uint8_t* buffer, uint8_t length, int16_t rssi, float snr);
 
 void IRAM_ATTR lorawan_custom_class_c_isr() {
     lorawan_packet_received_flag = true;
 }
 
-bool lorawan_helper_init(SX1262* radio_ptr, Print* debug_print, uint32_t app_interval, lorawan_downlink_callback_t downlink_callback) {
-    if (!radio_ptr) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] Radio pointer is null!");
-        return false;
-    }
-    sx1262_radio = radio_ptr; 
-
-    // Before starting LoRaWAN, verify that the radio can work with various bandwidths
-    if (debug_print) debug_print->println("[LoRaWANHelper] Checking radio configuration with various bandwidths...");
+// Initialize the LoRaWAN helper
+bool lorawan_helper_init(Print* debug_print, uint32_t app_interval, lorawan_downlink_callback_t downlink_callback) {
+    if (debug_print) debug_print->println("[LoRaWANHelper] Initializing with nopnop2002's SX1262 driver + RadioLib...");
     
-    // Set radio to standby
-    int state = sx1262_radio->standby();
-    if (state != RADIOLIB_ERR_NONE) {
-        if (debug_print) debug_print->printf("[LoRaWANHelper] Failed to set radio to standby: %d\n", state);
-        return false;
-    }
-    
-    // Try different bandwidths to find one that works
-    // SX1262 supports 7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, 500 kHz
-    float test_bandwidths[] = {125.0, 250.0, 500.0, 62.5, 31.25, 41.7, 20.8};
-    bool found_valid_bw = false;
-    float working_bw = 0;
-    
-    for (int i = 0; i < 7; i++) {
-        if (debug_print) debug_print->printf("[LoRaWANHelper] Testing bandwidth %.2f kHz...\n", test_bandwidths[i]);
-        state = sx1262_radio->setBandwidth(test_bandwidths[i]);
-        if (state == RADIOLIB_ERR_NONE) {
-            found_valid_bw = true;
-            working_bw = test_bandwidths[i];
-            if (debug_print) debug_print->printf("[LoRaWANHelper] Success! Radio supports %.2f kHz bandwidth.\n", working_bw);
-            break;
-        } else {
-            if (debug_print) debug_print->printf("[LoRaWANHelper] Failed to set bandwidth to %.2f kHz: %d\n", test_bandwidths[i], state);
-        }
-    }
-    
-    if (!found_valid_bw) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] WARNING: Could not find a supported bandwidth! LoRaWAN may not work correctly.");
-    } else if (working_bw != 125.0) {
-        if (debug_print) {
-            debug_print->println("[LoRaWANHelper] WARNING: Radio does not support 125 kHz bandwidth required by LoRaWAN!");
-            debug_print->printf("[LoRaWANHelper] Using %.2f kHz instead, but this may cause network compatibility issues.\n", working_bw);
-        }
-    }
-    
-    // Use US915 band for LoRaWAN in the USA (Helium/Chirpstack)
-    if (debug_print) debug_print->println("[LoRaWANHelper] Setting US915 band for LoRaWAN...");
-    current_band = &US915;
-    
-    // Create the LoRaWAN node
-    node = new LoRaWANNode(sx1262_radio, current_band);
-    if (!node) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] Failed to create LoRaWANNode instance.");
-        return false;
-    }
-
-    if (debug_print) {
-        debug_print->println("[LoRaWANHelper] LoRaWANNode created.");
-    }
-
-    // Store user callback for downlink data
+    // Store user callback and application interval
     user_downlink_callback = downlink_callback;
     application_interval_ms = app_interval;
     
     // Initialize mutex for thread-safe downlink handling
     lorawan_downlink_mutex = xSemaphoreCreateMutex();
     
+    // Create our hardware layer
+    radio_hw = new SX1262Radio();
+    if (!radio_hw) {
+        if (debug_print) debug_print->println("[LoRaWANHelper] Failed to create SX1262Radio instance!");
+        return false;
+    }
+
+    // Initialize hardware
+    if (!radio_hw->begin()) {
+        if (debug_print) debug_print->println("[LoRaWANHelper] Failed to initialize SX1262Radio!");
+        return false;
+    }
+    
+    if (debug_print) {
+        debug_print->println("[LoRaWANHelper] SX1262Radio initialized successfully!");
+        debug_print->print("[LoRaWANHelper] Supported bandwidths: ");
+        for (int i = 0; i < radio_hw->getNumSupportedBandwidths(); i++) {
+            debug_print->print(radio_hw->getSupportedBandwidth(i));
+            debug_print->print(" kHz");
+            if (i < radio_hw->getNumSupportedBandwidths() - 1) {
+                debug_print->print(", ");
+            }
+        }
+        debug_print->println();
+    }
+    
+    // Create our protocol layer
+    lorawan_adapter = new LoRaWANAdapter();
+    if (!lorawan_adapter) {
+        if (debug_print) debug_print->println("[LoRaWANHelper] Failed to create LoRaWANAdapter instance!");
+        return false;
+    }
+
+    // Initialize protocol layer with our hardware
+    if (!lorawan_adapter->begin(radio_hw)) {
+        if (debug_print) debug_print->println("[LoRaWANHelper] Failed to initialize LoRaWANAdapter!");
+        return false;
+    }
+
+    // Set the downlink callback
+    lorawan_adapter->setRxCallback(lorawan_rx_callback);
+    
+    if (debug_print) debug_print->println("[LoRaWANHelper] LoRaWANAdapter initialized successfully!");
+    
     return true;
 }
 
+// Set the callback function for handling downlink data
 void lorawan_helper_set_downlink_callback(lorawan_downlink_callback_t cb) {
     user_downlink_callback = cb;
 }
 
-static void internal_downlink_cb(uint8_t port, const uint8_t* payload, size_t len) {
-    if (user_downlink_callback) user_downlink_callback(payload, len, port);
+// Callback to handle downlink data from LoRaWANAdapter
+static void lorawan_rx_callback(uint8_t* buffer, uint8_t length, int16_t rssi, float snr) {
+    // Take the mutex
+    if (xSemaphoreTake(lorawan_downlink_mutex, (TickType_t)10) == pdTRUE) {
+        // Copy the data to our buffer
+        if (length <= LORAWAN_DOWNLINK_MAX_SIZE) {
+            memcpy(lorawan_downlink_data, buffer, length);
+            lorawan_downlink_data_len = length;
+            lorawan_packet_received_flag = true;
+        }
+        
+        // Release the mutex
+        xSemaphoreGive(lorawan_downlink_mutex);
+    }
 }
 
+// Join the LoRaWAN network using OTAA
+bool lorawan_helper_join(Print* debug_print) {
+    if (!radio_hw || !lorawan_adapter) {
+        if (debug_print) debug_print->println("[LoRaWANHelper] Cannot join: Hardware/Protocol layers not initialized.");
+        return false;
+    }
+    
+    if (debug_print) {
+        debug_print->println("[LoRaWANHelper] Starting OTAA join with the following credentials:");
+        debug_print->print("[LoRaWANHelper] DevEUI: ");
+        print_eui(debug_print, DEVEUI);
+        debug_print->print("[LoRaWANHelper] JoinEUI: ");
+        print_eui(debug_print, APPEUI);
+        debug_print->print("[LoRaWANHelper] AppKey: ");
+        print_appkey(debug_print, APPKEY);
+    }
+    
+    // Convert credentials from strings to the required formats
+    uint64_t devEUI = eui_string_to_u64(DEVEUI);
+    uint64_t joinEUI = eui_string_to_u64(APPEUI);
+    uint8_t nwkKey[16];
+    uint8_t appKey[16];
+    appkey_string_to_bytes(NWKKEY, nwkKey);
+    appkey_string_to_bytes(APPKEY, appKey);
+    
+    // Attempt to join
+    joined_otaa = lorawan_adapter->joinOTAA(devEUI, joinEUI, nwkKey, appKey);
+    
+    if (joined_otaa) {
+        if (debug_print) {
+            debug_print->println("[LoRaWANHelper] OTAA join successful!");
+            debug_print->printf("[LoRaWANHelper] Device Address: 0x%08X\n", lorawan_adapter->getDevAddr());
+        }
+        
+        // Enable Class C after joining
+        if (lorawan_adapter->enableClassC()) {
+            custom_class_c_enabled = true;
+            if (debug_print) debug_print->println("[LoRaWANHelper] Class C enabled successfully!");
+        } else {
+            if (debug_print) debug_print->println("[LoRaWANHelper] Failed to enable Class C!");
+            custom_class_c_enabled = false;
+        }
+    } else {
+        if (debug_print) debug_print->println("[LoRaWANHelper] OTAA join failed!");
+}
+
+    return joined_otaa;
+}
+
+// Send an uplink message
 int lorawan_helper_send_uplink(const char* data, size_t len, bool confirmed, Print* debug_print) {
-    if (!node || !node->isActivated()) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] Cannot send uplink: Not joined or node not initialized.");
+    if (!radio_hw || !lorawan_adapter || !lorawan_adapter->isJoined()) {
+        if (debug_print) debug_print->println("[LoRaWANHelper] Cannot send uplink: Not joined or not initialized.");
         return -1;
     }
 
     if (debug_print) debug_print->printf("[LoRaWANHelper] Sending uplink: %s (len: %d), confirmed: %d\n", data, len, confirmed);
     
-    // Use node->sendReceive() from RadioLib v7.x
-    // Parameters: const uint8_t* dataUp, size_t lenUp, uint8_t fPort = 1, bool isConfirmed = false
-    // We'll use the default fPort for now (usually 1).
-    int state = RADIOLIB_ERR_NONE;
-    uint8_t fPort = 1; // Default fPort value
-    
-    // Send the data without using the event objects
-    state = node->sendReceive((const uint8_t*)data, len, fPort, confirmed);
+    // Send the data
+    bool success = lorawan_adapter->send((uint8_t*)data, len, 1, confirmed);
 
-    if (state == RADIOLIB_ERR_NONE) {
+    if (success) {
         if (debug_print) debug_print->println("[LoRaWANHelper] Uplink send successful.");
-    } else if (state == RADIOLIB_ERR_TX_TIMEOUT) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] Uplink send timeout reported by RadioLib.");
-    } else if (state == RADIOLIB_ERR_RX_TIMEOUT && confirmed) {
-        // For confirmed uplinks, RADIOLIB_ERR_RX_TIMEOUT means TX was OK, but ACK not received.
-        if (debug_print) debug_print->println("[LoRaWANHelper] Confirmed uplink sent, but no ACK received (timeout).");
+        return 0; // Success (corresponds to RADIOLIB_ERR_NONE)
     } else {
-        if (debug_print) debug_print->printf("[LoRaWANHelper] Uplink send failed, RadioLib error: %d\n", state);
-    }
-    
-    // If custom Class C was enabled, we MUST re-establish it, as TX changes radio state.
-    if (custom_class_c_enabled) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] Re-enabling custom Class C receive after uplink.");
-        bool reinit_ok = lorawan_helper_enable_class_c_receive(debug_print);
-        if(!reinit_ok){
-             if (debug_print) debug_print->println("[LoRaWANHelper] FAILED to re-enable custom Class C receive after uplink.");
-             custom_class_c_enabled = false; // Mark as disabled if re-init fails
+        if (debug_print) debug_print->println("[LoRaWANHelper] Uplink send failed.");
+        return -2; // Generic failure
         }
     }
 
-    // Return the RadioLib state code. 
-    // The caller might interpret RADIOLIB_ERR_RX_TIMEOUT for confirmed messages differently (e.g. as a partial success)
-    return state; 
-}
-
+// Process any pending downlink data
 void lorawan_helper_process_pending_downlink(Print* debug_print) {
     if (xSemaphoreTake(lorawan_downlink_mutex, (TickType_t)10) == pdTRUE) {
         if (lorawan_downlink_data_len > 0) {
@@ -223,330 +253,91 @@ void lorawan_helper_process_pending_downlink(Print* debug_print) {
     }
 }
 
-// New function to check and re-enable Class C if needed
+// Check and re-enable Class C if needed
 bool lorawan_helper_check_class_c(Print* debug_print) {
-    if (!node || !node->isActivated()) {
-        return false;
-    }
-
-    if (custom_class_c_enabled && !lorawan_packet_received_flag) {
-        // Just periodically re-enable Class C receive mode
-        if (debug_print) {
-            debug_print->println("[LoRaWANHelper] Refreshing Class C receive mode");
-        }
-        return lorawan_helper_enable_class_c_receive(debug_print);
-    }
-    
-    return custom_class_c_enabled;
-}
-
-void lorawan_helper_loop(Print* debug_print) {
-    if (custom_class_c_enabled) {
-        if (lorawan_packet_received_flag) {
-            lorawan_packet_received_flag = false; // Reset flag
-
-            if (debug_print) debug_print->println("[LoRaWANHelper] DIO1 ISR triggered, packet potentially received.");
-            
-            uint8_t downlink_buffer[LORAWAN_DOWNLINK_MAX_SIZE];
-            size_t received_len = 0;
-            int state = sx1262_radio->readData(downlink_buffer, LORAWAN_DOWNLINK_MAX_SIZE);
-
-            if (state == RADIOLIB_ERR_NONE) {
-                 received_len = sx1262_radio->getPacketLength();
-                 if (debug_print) debug_print->printf("[LoRaWANHelper] Raw packet read from radio, len: %d\n", received_len);
-                
-                // In RadioLib v7.x, we need to parse the downlink manually since we're operating outside
-                // the normal node->sendReceive() flow. This is a simplified implementation.
-                if (received_len > 0) {
-                    if (xSemaphoreTake(lorawan_downlink_mutex, (TickType_t)10) == pdTRUE) {
-                        // Just store the raw data - in a real implementation, you'd want to parse
-                        // the LoRaWAN packet properly and extract payload, port, etc.
-                        memcpy(lorawan_downlink_data, downlink_buffer, received_len > LORAWAN_DOWNLINK_MAX_SIZE ? LORAWAN_DOWNLINK_MAX_SIZE : received_len);
-                        lorawan_downlink_data_len = received_len > LORAWAN_DOWNLINK_MAX_SIZE ? LORAWAN_DOWNLINK_MAX_SIZE : received_len;
-                        xSemaphoreGive(lorawan_downlink_mutex);
-                    }
-                }
-                
-                // Re-enable receive for next packet
-                if (!lorawan_helper_enable_class_c_receive(debug_print)) {
-                    if (debug_print) debug_print->println("[LoRaWANHelper] Failed to re-enable Class C receive after packet reception!");
-                    custom_class_c_enabled = false;
-                }
-            } else {
-                if (debug_print) debug_print->printf("[LoRaWANHelper] Failed to read packet data, error: %d\n", state);
-                
-                // Try to re-enable receive
-                if (!lorawan_helper_enable_class_c_receive(debug_print)) {
-                    if (debug_print) debug_print->println("[LoRaWANHelper] Failed to re-enable Class C receive after error!");
-                    custom_class_c_enabled = false;
-                }
-            }
-        }
-        
-        // Periodically check and re-enable Class C if needed (every 5 minutes)
-        static unsigned long last_check_time = 0;
-        unsigned long now = millis();
-        if (now - last_check_time > 300000) { // 5 minutes
-            lorawan_helper_check_class_c(debug_print);
-            last_check_time = now;
-        }
-    }
-}
-
-bool lorawan_helper_join(Print* debug_print) {
-    if (!node) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] LoRaWAN node not initialized!");
-        return false;
-    }
-
-    if (debug_print) debug_print->println("[LoRaWANHelper] Starting OTAA join...");
-    
-    // Convert EUI strings to appropriate types for RadioLib
-    uint64_t join_eui = eui_string_to_u64(APPEUI);
-    uint64_t dev_eui = eui_string_to_u64(DEVEUI);
-
-    // Convert AppKey string to byte array for RadioLib
-    uint8_t app_key[16];
-    appkey_string_to_bytes(APPKEY, app_key);
-
-    // Debug: Print values
-    if (debug_print) {
-        debug_print->println("[LoRaWANHelper] OTAA parameters:");
-        debug_print->print("  JoinEUI: "); print_eui(debug_print, APPEUI);
-        debug_print->print("  DevEUI:  "); print_eui(debug_print, DEVEUI);
-        debug_print->print("  AppKey:  "); print_appkey(debug_print, APPKEY);
-        debug_print->printf("  Band:    %s\n", "US915");
-    }
-
-    // Attempt OTAA join multiple times
-    const int MAX_JOIN_ATTEMPTS = 3;
-    int join_attempts = 0;
-    int state = RADIOLIB_ERR_NONE;
-    bool join_success = false;
-    
-    while (join_attempts < MAX_JOIN_ATTEMPTS && !join_success) {
-        join_attempts++;
-        
-        if (debug_print) {
-            debug_print->printf("[LoRaWANHelper] Join attempt %d of %d...\n", join_attempts, MAX_JOIN_ATTEMPTS);
-        }
-        
-        // We use the same key for both nwkKey and appKey to work with older networks
-        state = node->beginOTAA(join_eui, dev_eui, app_key, app_key);
-        
-        if (state != RADIOLIB_ERR_NONE) {
-            if (debug_print) {
-                debug_print->printf("[LoRaWANHelper] Join attempt %d failed with error: %d\n", 
-                    join_attempts, state);
-                
-                if (state == RADIOLIB_ERR_INVALID_BANDWIDTH) {
-                    debug_print->println("[LoRaWANHelper] The radio hardware does not support the required bandwidth.");
-                } else if (state == RADIOLIB_ERR_NETWORK_NOT_JOINED) {
-                    debug_print->println("[LoRaWANHelper] The network did not accept the join request.");
-                } else if (state == RADIOLIB_ERR_RX_TIMEOUT) {
-                    debug_print->println("[LoRaWANHelper] Timed out waiting for join accept from gateway.");
-                }
-            }
-            
-            // Wait before trying again
-            if (join_attempts < MAX_JOIN_ATTEMPTS) {
-                if (debug_print) debug_print->println("[LoRaWANHelper] Waiting before retry...");
-                delay(5000); // 5 second delay between attempts
-            }
-            continue;
-        }
-        
-        // Check if we actually got a valid device address
-        uint32_t dev_addr = node->getDevAddr();
-        if (dev_addr == 0) {
-            if (debug_print) {
-                debug_print->printf("[LoRaWANHelper] Join attempt %d: Radio reports success but received zero device address!\n", join_attempts);
-                debug_print->println("[LoRaWANHelper] This usually means the device did not actually connect to the network.");
-            }
-            
-            if (join_attempts < MAX_JOIN_ATTEMPTS) {
-                if (debug_print) debug_print->println("[LoRaWANHelper] Waiting before retry...");
-                delay(5000); // 5 second delay between attempts
-            }
-            continue;
-        }
-        
-        // If we got here, the join was successful
-        join_success = true;
-        
-        if (debug_print) {
-            debug_print->println("[LoRaWANHelper] LoRaWAN OTAA join successful!");
-            debug_print->printf("[LoRaWANHelper] Device address: %08X\n", dev_addr);
-            debug_print->println("[LoRaWANHelper] Default channels enabled:");
-            for (int i = 0; i < 8; i++) {
-                debug_print->printf("  Channel %d: %.1f MHz\n", i, 902.3 + (i * 0.2));
-            }
-        }
-    }
-    
-    if (!join_success) {
-        if (debug_print) {
-            debug_print->printf("[LoRaWANHelper] Failed to join after %d attempts.\n", MAX_JOIN_ATTEMPTS);
-            debug_print->println("[LoRaWANHelper] Possible issues:");
-            debug_print->println("  1. Device is not registered on the network server");
-            debug_print->println("  2. No gateway in range");
-            debug_print->println("  3. Incorrect AppEUI, DevEUI, or AppKey");
-            debug_print->println("  4. Radio hardware issues (e.g., antenna, bandwidth)");
-        }
+    if (!radio_hw || !lorawan_adapter || !lorawan_adapter->isJoined()) {
         return false;
     }
     
-    joined_otaa = true;
-    return true;
+    return lorawan_adapter->isClassCEnabled();
 }
 
+// Enable Class C receive mode
 bool lorawan_helper_enable_class_c_receive(Print* debug_print) {
-    if (!node || !node->isActivated()) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] Cannot enable Class C: Not joined!");
+    if (!radio_hw || !lorawan_adapter || !lorawan_adapter->isJoined()) {
+        if (debug_print) debug_print->println("[LoRaWANHelper] Cannot enable Class C: Not joined or not initialized.");
         return false;
     }
     
-    // First, set up the interrupt handler for DIO1
-    attachInterrupt(DIO1, lorawan_custom_class_c_isr, RISING);
+    if (debug_print) debug_print->println("[LoRaWANHelper] Enabling Class C receive mode...");
     
-    // Get RX2 parameters from node (currently hardcoded from US915 spec)
-    float freq = 923.3; // MHz, default US915 RX2 frequency
-    uint8_t sf = 12;    // Default SF12 for RX2
-    float bw = 125.0;   // kHz, use 125 kHz bandwidth which is widely supported
+    bool success = lorawan_adapter->enableClassC();
     
-    if (debug_print) debug_print->printf("[LoRaWANHelper] Configuring Class C continuous receive (RX2): %.1f MHz, SF%d, BW%.1f kHz\n", 
-        freq, sf, bw);
-    
-    // Attempt to configure the radio with these parameters
-    int state = sx1262_radio->standby();
-    if (state != RADIOLIB_ERR_NONE) {
-        if (debug_print) debug_print->printf("[LoRaWANHelper] Failed to set radio to standby: %d\n", state);
-        return false;
+    if (success) {
+        custom_class_c_enabled = true;
+        if (debug_print) debug_print->println("[LoRaWANHelper] Class C enabled successfully!");
+    } else {
+        custom_class_c_enabled = false;
+        if (debug_print) debug_print->println("[LoRaWANHelper] Failed to enable Class C!");
     }
     
-    // Try setting frequency
-    state = sx1262_radio->setFrequency(freq);
-    if (state != RADIOLIB_ERR_NONE) {
-        if (debug_print) debug_print->printf("[LoRaWANHelper] Failed to set frequency: %d\n", state);
-        return false;
+    return success;
     }
     
-    // Try setting bandwidth with fallback options if the primary one fails
-    // SX1262 supports 7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, 500 kHz
-    float bandwidths[] = {125.0, 250.0, 500.0, 62.5, 31.25, 41.7, 20.8, 15.6, 10.4, 7.8};
-    bool bw_success = false;
-    
-    for (int i = 0; i < 10; i++) {
-        state = sx1262_radio->setBandwidth(bandwidths[i]);
-        if (state == RADIOLIB_ERR_NONE) {
-            bw = bandwidths[i];
-            bw_success = true;
-            if (debug_print) debug_print->printf("[LoRaWANHelper] Set bandwidth to %.1f kHz\n", bw);
-            break;
-        } else {
-            if (debug_print) debug_print->printf("[LoRaWANHelper] Failed to set bandwidth to %.1f kHz: %d\n", bandwidths[i], state);
-        }
+// Main loop processing
+void lorawan_helper_loop(Print* debug_print) {
+    if (!radio_hw || !lorawan_adapter) {
+        return;
     }
     
-    if (!bw_success) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] ERROR: Failed to set any bandwidth! Cannot continue.");
-        return false;
+    // Let the adapter handle events
+    lorawan_adapter->loop();
+    
+    // Check if we have pending downlink data
+    if (lorawan_packet_received_flag) {
+        lorawan_packet_received_flag = false;
+        
+        if (debug_print) debug_print->println("[LoRaWANHelper] Packet received flag detected!");
+        
+        // Process the downlink
+        lorawan_helper_process_pending_downlink(debug_print);
     }
-    
-    // Try different spreading factors if SF12 fails
-    bool sf_success = false;
-    uint8_t spreading_factors[] = {12, 11, 10, 9, 8, 7};
-    
-    for (int i = 0; i < 6; i++) {
-        state = sx1262_radio->setSpreadingFactor(spreading_factors[i]);
-        if (state == RADIOLIB_ERR_NONE) {
-            sf = spreading_factors[i];
-            sf_success = true;
-            if (debug_print) debug_print->printf("[LoRaWANHelper] Set spreading factor to SF%d\n", sf);
-            break;
-        } else {
-            if (debug_print) debug_print->printf("[LoRaWANHelper] Failed to set SF%d: %d\n", spreading_factors[i], state);
-        }
-    }
-    
-    if (!sf_success) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] ERROR: Failed to set any spreading factor! Cannot continue.");
-        return false;
-    }
-    
-    // Set coding rate to 4/5 (standard for LoRaWAN) with fallback options
-    int coding_rates[] = {5, 6, 7, 8};
-    bool cr_success = false;
-    
-    for (int i = 0; i < 4; i++) {
-        state = sx1262_radio->setCodingRate(coding_rates[i]);
-        if (state == RADIOLIB_ERR_NONE) {
-            if (debug_print) debug_print->printf("[LoRaWANHelper] Set coding rate to 4/%d\n", coding_rates[i]);
-            cr_success = true;
-            break;
-        } else {
-            if (debug_print) debug_print->printf("[LoRaWANHelper] Failed to set coding rate 4/%d: %d\n", coding_rates[i], state);
-        }
-    }
-    
-    if (!cr_success) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] ERROR: Failed to set any coding rate! Cannot continue.");
-        return false;
-    }
-    
-    // Start continuous receive
-    state = sx1262_radio->startReceive();
-    if (state != RADIOLIB_ERR_NONE) {
-        if (debug_print) debug_print->printf("[LoRaWANHelper] Failed to start continuous receive: %d\n", state);
-        return false;
-    }
-    
-    if (debug_print) {
-        debug_print->printf("[LoRaWANHelper] Class C continuous receive enabled at %.2f MHz, SF%d, BW %.1f kHz!\n", 
-            freq, sf, bw);
-    }
-    custom_class_c_enabled = true;
-    
-    return true;
 }
 
+// Check if the device has joined the network
 bool lorawan_helper_is_joined() {
-    if (!node) {
+    if (!lorawan_adapter) {
         return false;
     }
-    return node->isActivated();
+    
+    return lorawan_adapter->isJoined();
 }
 
+// Get the device address
 uint32_t lorawan_helper_get_dev_addr(Print* debug_print) {
-    if (!node || !node->isActivated()) {
-        if (debug_print) debug_print->println("[LoRaWANHelper] Not joined, no device address available.");
+    if (!lorawan_adapter || !lorawan_adapter->isJoined()) {
+        if (debug_print) debug_print->println("[LoRaWANHelper] Cannot get DevAddr: Not joined or not initialized.");
         return 0;
     }
-    return node->getDevAddr();
+    
+    return lorawan_adapter->getDevAddr();
 }
 
-// --- Implementation ---
-
-// Helper to convert EUI strings from secrets.h to uint64_t
+// Convert a hex string EUI to uint64_t
 static uint64_t eui_string_to_u64(const char* eui_str) {
     uint64_t eui = 0;
-    char temp[3]; // For holding two chars + null terminator
-    temp[2] = '\0';
-    for (int i = 0; i < 8; ++i) {
-        temp[0] = eui_str[i * 2];
-        temp[1] = eui_str[i * 2 + 1];
-        eui |= (uint64_t)strtol(temp, nullptr, 16) << (56 - (i * 8));
+    for (int i = 0; i < 16; i += 2) {
+        char hex[3] = {eui_str[i], eui_str[i+1], 0};
+        uint8_t byte = strtoul(hex, NULL, 16);
+        eui = (eui << 8) | byte;
     }
     return eui;
 }
 
-// Helper to convert AppKey string from secrets.h to byte array
+// Convert a hex string AppKey to a byte array
 static void appkey_string_to_bytes(const char* appkey_str, uint8_t* key_bytes) {
-    char temp[3];
-    temp[2] = '\0';
-    for (int i = 0; i < 16; ++i) {
-        temp[0] = appkey_str[i * 2];
-        temp[1] = appkey_str[i * 2 + 1];
-        key_bytes[i] = (uint8_t)strtol(temp, nullptr, 16);
+    for (int i = 0; i < 16; i++) {
+        char hex[3] = {appkey_str[i*2], appkey_str[i*2+1], 0};
+        key_bytes[i] = strtoul(hex, NULL, 16);
     }
 } 
