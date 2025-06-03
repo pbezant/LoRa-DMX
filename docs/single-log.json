@@ -1,0 +1,23 @@
+{
+    "time": "2025-06-03T18:19:50.045550564+00:00",
+    "deviceInfo": {
+        "tenantId": "0c6e58d9-cd0d-4ccd-84eb-29899e100fc4",
+        "tenantName": "structuresense",
+        "applicationId": "e846ed91-61de-4605-a1b1-9738d526680d",
+        "applicationName": "StructureSense",
+        "deviceProfileId": "4f2a132c-40e5-4e8e-956f-44b4b5d25461",
+        "deviceProfileName": "StructureSense - Dmx",
+        "deviceName": "dmx-d4cc",
+        "devEui": "90cff868ef8bd4cc",
+        "deviceClassEnabled": "CLASS_C",
+        "tags": {}
+    },
+    "level": "ERROR",
+    "code": "DOWNLINK_PAYLOAD_SIZE",
+    "description": "Device queue-item discarded because it exceeds the max. payload size",
+    "context": {
+        "queue_item_id": "fe57c017-2596-4979-a3ed-6ac3678b5f3b",
+        "item_size": "86",
+        "max_payload_size": "53"
+    }
+}
