@@ -68,19 +68,26 @@
  * }
  * 
  * Libraries:
- * - LoRaManager: Custom LoRaWAN communication via RadioLib
+ * - LoRaManager2: LoRaWAN Class C communication library for ESP32 + SX1262
  * - ArduinoJson: JSON parsing
  * - DmxController: DMX output control
+ * - Ticker: Hardware-timed uplinks
  */
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <SPI.h>  // Include SPI library explicitly
 #include <vector>
-#include "LoRaManager.h"
+#include <LoRaManager.h>  // LoRaManager2 library
 #include "DmxController.h"
 #include <esp_task_wdt.h>  // Watchdog
 #include "secrets.h"  // Include the secrets.h file for LoRaWAN credentials
+#include <WiFi.h>
+#include <esp_dmx.h>
+#include <esp_task_wdt.h>
+#include <vector>
+#include <algorithm>
+#include <Ticker.h>  // Add Ticker library for hardware-timed uplinks
 
 // Debug output
 #define SERIAL_BAUD 115200
@@ -94,42 +101,6 @@
 #define DMX_RX_PIN 20  // RX pin for DMX
 #define DMX_DIR_PIN 5  // DIR pin for DMX (connect to both DE and RE on MAX485)
 
-// LoRaWAN TTN Connection Parameters
-#define LORA_CS_PIN   8     // Corrected CS pin for Heltec LoRa 32 V3
-#define LORA_DIO1_PIN 14    // DIO1 pin
-#define LORA_RESET_PIN 12   // Reset pin  
-#define LORA_BUSY_PIN 13    // Busy pin
-
-// SPI pins for Heltec LoRa 32 V3
-#define LORA_SPI_SCK  9   // SPI clock
-#define LORA_SPI_MISO 11  // SPI MISO
-#define LORA_SPI_MOSI 10  // SPI MOSI
-
-// LoRaWAN Credentials from secrets.h (pre-defined in secrets.h)
-// Convert hex EUI strings to uint64_t
-uint64_t joinEUI = 0;
-uint64_t devEUI = 0;
-// No need for byte arrays now, we'll use the hex strings directly
-
-// Function to convert hex string to uint64_t for the EUIs
-uint64_t hexStringToUint64(const char* hexStr) {
-  uint64_t result = 0;
-  // Process 16 characters (8 bytes)
-  for (int i = 0; i < 16 && hexStr[i] != '\0'; i++) {
-    char c = hexStr[i];
-    uint8_t nibble = 0;
-    if (c >= '0' && c <= '9') {
-      nibble = c - '0';
-    } else if (c >= 'A' && c <= 'F') {
-      nibble = c - 'A' + 10;
-    } else if (c >= 'a' && c <= 'f') {
-      nibble = c - 'a' + 10;
-    }
-    result = (result << 4) | nibble;
-  }
-  return result;
-}
-
 // DMX configuration - we'll use dynamic configuration from JSON
 #define MAX_FIXTURES 32           // Maximum number of fixtures supported
 #define MAX_CHANNELS_PER_FIXTURE 16 // Maximum channels per fixture
@@ -139,7 +110,10 @@ uint64_t hexStringToUint64(const char* hexStr) {
 bool dmxInitialized = false;
 bool loraInitialized = false;
 DmxController* dmx = NULL;
-LoRaManager* lora = NULL;
+LoraManager lora;  // Fixed case-sensitive class name
+
+// Add Ticker for hardware-timed periodic uplinks (like working example)
+Ticker uplinkTicker;
 
 // Add mutex for thread-safe DMX data access
 SemaphoreHandle_t dmxMutex = NULL;
@@ -151,9 +125,10 @@ TaskHandle_t dmxTaskHandle = NULL;
 bool keepDmxDuringRx = true;
 
 // Forward declarations
-void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port);
+void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr);
 bool processLightsJson(JsonArray lightsArray);
 void processMessageQueue();  // Add this forward declaration
+void send_lora_frame();  // Add this forward declaration for Ticker callback
 
 // Placeholder for the received data
 uint8_t receivedData[MAX_JSON_SIZE];
@@ -171,6 +146,11 @@ bool rainbowStaggered = true;     // Whether to stagger colors across fixtures
 // Add timing variables for various operations
 unsigned long lastHeartbeat = 0;  // Timestamp for heartbeat messages
 unsigned long lastStatusUpdate = 0; // Timestamp for status updates
+
+// Connection state tracking for LoRaManager2
+bool isConnected = false;
+uint32_t lastConnectionAttempt = 0;
+const uint32_t CONNECTION_RETRY_INTERVAL = 60000; // 1 minute between retries
 
 // Always process in callback for maximum reliability
 bool processInCallback = true; // Set to true to process commands immediately in callback
@@ -551,11 +531,6 @@ private:
 // Create a global pattern handler
 DmxPattern patternHandler;
 
-// Add connection state tracking
-bool isConnected = false;
-uint32_t lastConnectionAttempt = 0;
-const uint32_t CONNECTION_RETRY_INTERVAL = 60000; // 1 minute between retries
-
 // Add message queue for priority handling
 struct PendingMessage {
     String payload;
@@ -600,7 +575,7 @@ void processMessageQueue() {
     
     // Try to send the highest priority message
     const PendingMessage& msg = messageQueue.front();
-    if (lora->sendString(msg.payload, msg.port, msg.confirmed)) {
+    if (lora.send((const uint8_t*)msg.payload.c_str(), msg.payload.length(), msg.port)) {
         messageQueue.erase(messageQueue.begin());
     }
 }
@@ -691,6 +666,57 @@ bool processJsonPayload(const String& jsonString) {
 
   Serial.print("Processing JSON payload: ");
   Serial.println(jsonString);
+
+  // Check for simple "command" format from README
+  if (doc.containsKey("command")) {
+    String command = doc["command"].as<String>();
+    Serial.print("Simple command format detected: ");
+    Serial.println(command);
+    
+    if (dmxInitialized && dmx != NULL) {
+      if (command == "test") {
+        Serial.println("COMMAND: Run test mode (set all fixtures to green)");
+        for (int i = 0; i < dmx->getNumFixtures(); i++) {
+          dmx->setFixtureColor(i, 0, 255, 0, 0);
+        }
+      } else if (command == "red") {
+        Serial.println("COMMAND: Set all fixtures to RED");
+        for (int i = 0; i < dmx->getNumFixtures(); i++) {
+          dmx->setFixtureColor(i, 255, 0, 0, 0);
+        }
+      } else if (command == "green") {
+        Serial.println("COMMAND: Set all fixtures to GREEN");
+        for (int i = 0; i < dmx->getNumFixtures(); i++) {
+          dmx->setFixtureColor(i, 0, 255, 0, 0);
+        }
+      } else if (command == "blue") {
+        Serial.println("COMMAND: Set all fixtures to BLUE");
+        for (int i = 0; i < dmx->getNumFixtures(); i++) {
+          dmx->setFixtureColor(i, 0, 0, 255, 0);
+        }
+      } else if (command == "white") {
+        Serial.println("COMMAND: Set all fixtures to WHITE");
+        for (int i = 0; i < dmx->getNumFixtures(); i++) {
+          dmx->setFixtureColor(i, 0, 0, 0, 255);
+        }
+      } else if (command == "off") {
+        Serial.println("COMMAND: Turn all fixtures OFF");
+        for (int i = 0; i < dmx->getNumFixtures(); i++) {
+          dmx->setFixtureColor(i, 0, 0, 0, 0);
+        }
+      } else {
+        Serial.print("Unknown command: ");
+        Serial.println(command);
+        return false;
+      }
+      
+      // Send the DMX data and save settings
+      dmx->sendData();
+      dmx->saveSettings();
+      Serial.println("Simple command processed successfully");
+      return true;
+    }
+  }
 
   // First, check for pattern commands
   if (doc.containsKey("pattern")) {
@@ -933,9 +959,9 @@ bool processJsonPayload(const String& jsonString) {
       }
       
       // Send a ping response uplink
-      if (loraInitialized && lora != NULL) {
+      if (loraInitialized && lora.isJoined()) {
         String response = "{\"ping_response\":\"ok\"}";
-        if (lora->sendString(response, 1, true)) {
+        if (lora.send((const uint8_t*)response.c_str(), response.length(), 1)) {
           Serial.println("Ping response sent (confirmed)");
         }
       }
@@ -1129,11 +1155,11 @@ void debugBytes(const char* label, uint8_t* data, size_t size) {
  * @param size The size of the payload
  * @param port The port on which the data was received
  */
-void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
+void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr) {
   Serial.println("\n\n==== DEBUG: ENTERING DOWNLINK CALLBACK ====");
   
   // Print a detailed raw byte dump of the received payload
-  debugBytes("RAW DOWNLINK PAYLOAD", payload, size);
+  debugBytes("RAW DOWNLINK PAYLOAD", (uint8_t*)data, size);
   
   // Print a memory report at the start
   Serial.print("Free heap at start of downlink handler: ");
@@ -1141,7 +1167,7 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
   
   // Handle basic binary commands (values 0-4) first before any other processing
   if (size == 1) {
-    uint8_t cmd = payload[0];
+    uint8_t cmd = data[0];
     
     // Check if it's a binary value 0-4
     if (cmd <= 4) {
@@ -1249,7 +1275,7 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
   }
   
   // Quick test for any special byte (0xAA or 170 decimal or any other non-standard value)
-  if (size == 1 && (payload[0] == 0xAA || payload[0] == 170 || payload[0] == 0xFF || payload[0] == 255)) {
+  if (size == 1 && (data[0] == 0xAA || data[0] == 170 || data[0] == 0xFF || data[0] == 255)) {
     Serial.println("DIRECT TEST TRIGGER DETECTED - Running test with JSON from README");
     
     // Force green on fixtures
@@ -1284,10 +1310,10 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
   Serial.print("\n\n=== DOWNLINK #");
   Serial.print(downlinkCounter);
   Serial.println(" RECEIVED ===");
-  Serial.print("Port: ");
-  Serial.print(port);
-  Serial.print(", Size: ");
-  Serial.println(size);
+  Serial.print("RSSI: ");
+  Serial.print(rssi);
+  Serial.print(", SNR: ");
+  Serial.println(snr);
   
   if (size <= MAX_JSON_SIZE) {
     Serial.println("DEBUG: Size check passed");
@@ -1306,8 +1332,8 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
         Serial.print(": ");
       }
       
-      if (payload[i] < 16) Serial.print("0");
-      Serial.print(payload[i], HEX);
+      if (data[i] < 16) Serial.print("0");
+      Serial.print(data[i], HEX);
       Serial.print(" ");
     }
     Serial.println();
@@ -1319,15 +1345,15 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
     
     // Check if payload contains any non-printable, non-whitespace characters
     for (size_t i = 0; i < size; i++) {
-      if (payload[i] < 32 && payload[i] != '\t' && payload[i] != '\r' && payload[i] != '\n') {
+      if (data[i] < 32 && data[i] != '\t' && data[i] != '\r' && data[i] != '\n') {
         // Non-printable character found (except control chars)
-        if (payload[i] != 0) { // Null bytes might be padding
+        if (data[i] != 0) { // Null bytes might be padding
           isProbablyText = false;
           isProbablyBinary = true;
           Serial.print("Non-printable char at position ");
           Serial.print(i);
           Serial.print(": 0x");
-          Serial.println(payload[i], HEX);
+          Serial.println(data[i], HEX);
         }
       }
     }
@@ -1343,7 +1369,7 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
     String payloadStr = "";
     Serial.println("DEBUG: Creating payload string");
     for (size_t i = 0; i < size; i++) {
-      payloadStr += (char)payload[i];
+      payloadStr += (char)data[i];
     }
     
     // Debug: Log the received data as text
@@ -1351,13 +1377,43 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
     Serial.println(payloadStr);
     Serial.println("-------------------------------------");
     
-    // First, check for the exact example JSON from README
+    // Check for "go" command (from README)
+    if (payloadStr == "go") {
+      Serial.println("GO COMMAND DETECTED - Processing built-in example JSON from README");
+      
+      // Use the exact JSON example from the README
+      String exampleJson = "{\"lights\":[{\"address\":1,\"channels\":[0,255,0,0]},{\"address\":2,\"channels\":[0,255,0,0]},{\"address\":3,\"channels\":[0,255,0,0]},{\"address\":4,\"channels\":[0,255,0,0]}]}";
+      
+      if (dmxInitialized && dmx != NULL) {
+        // Configure test fixtures if none exist
+        if (dmx->getNumFixtures() == 0) {
+          Serial.println("Setting up default test fixtures for GO command");
+          dmx->initializeFixtures(4, 4);
+          dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+          dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+          dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+          dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+        }
+        
+        // Process the example JSON
+        bool success = processJsonPayload(exampleJson);
+        if (success) {
+          Serial.println("GO command processed successfully - all fixtures set to GREEN");
+          DmxController::blinkLED(LED_PIN, 3, 200);
+          return;
+        } else {
+          Serial.println("Failed to process GO command JSON");
+        }
+      }
+    }
+    
+    // Check for single-byte commands  
     if (size == 1) {
       // Single byte command
       Serial.print("Single-byte command detected: ");
-      Serial.println(payload[0]);
+      Serial.println(data[0]);
       
-      if (payload[0] == 0x02 || payload[0] == '2') {
+      if (data[0] == 0x02 || data[0] == '2') {
         Serial.println("SPECIAL HANDLING: Setting all fixtures to GREEN");
         if (dmxInitialized && dmx != NULL) {
           for (int i = 0; i < dmx->getNumFixtures(); i++) {
@@ -1369,7 +1425,10 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
           return; // Command was processed
         }
       }
-    } else if (payloadStr.indexOf("\"lights\"") > 0) {
+    }
+    
+    // First, check for the exact example JSON from README
+    if (payloadStr.indexOf("\"lights\"") > 0) {
       // This looks like our target JSON format
       Serial.println("DETECTED LIGHTS JSON COMMAND");
       
@@ -1582,9 +1641,9 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
             if (payloadStr.indexOf("\"ping\"") > 0) {
               Serial.println("Sending ping response");
               // Send a ping response confirmation uplink
-              if (loraInitialized && lora != NULL) {
+              if (loraInitialized && lora.isJoined()) {
                 String response = "{\"ping_response\":\"ok\",\"counter\":" + String(downlinkCounter) + "}";
-                if (lora->sendString(response, 1, true)) {
+                if (lora.send((const uint8_t*)response.c_str(), response.length(), 1)) {
                   Serial.println("Ping response sent (confirmed)");
                 }
               }
@@ -1606,9 +1665,9 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
     }
     
     // For backward compatibility, also store in buffer
-    memcpy(receivedData, payload, size);
+    memcpy(receivedData, data, size);
     receivedDataSize = size;
-    receivedPort = port;
+    receivedPort = 1;
     dataReceived = false;
   } else {
     Serial.println("ERROR: Received payload exceeds buffer size");
@@ -1619,50 +1678,6 @@ void handleDownlinkCallback(uint8_t* payload, size_t size, uint8_t port) {
   Serial.println(ESP.getFreeHeap());
   
   Serial.println("==== DEBUG: EXITING DOWNLINK CALLBACK ====");
-}
-
-/**
- * Handle incoming downlink data from LoRaWAN
- * 
- * @param payload The payload data
- * @param size The size of the payload
- * @param port The port on which the data was received
- */
-void handleDownlink(uint8_t* payload, size_t size, uint8_t port) {
-    Serial.printf("Received downlink on port %d, size: %d\n", port, size);
-    
-    try {
-        // Convert payload to string
-        String payloadStr = "";
-        for (size_t i = 0; i < size; i++) {
-            payloadStr += (char)payload[i];
-        }
-        
-        // Process the payload
-        if (dmxInitialized) {
-            bool success = processJsonPayload(payloadStr);
-            if (success) {
-                // Queue confirmation message with high priority (50)
-                String response = "{\"ack\":true,\"port\":" + String(port) + "}";
-                queueMessage(response, 1, true, 50);
-                
-                DmxController::blinkLED(LED_PIN, 2, 200);
-            } else {
-                // Queue error message with high priority (50)
-                String response = "{\"ack\":false,\"error\":\"processing_failed\"}";
-                queueMessage(response, 1, true, 50);
-                
-                DmxController::blinkLED(LED_PIN, 5, 100);
-            }
-        }
-    } catch (const std::exception& e) {
-        Serial.print("Error processing downlink: ");
-        Serial.println(e.what());
-        
-        // Queue error message with high priority (50)
-        String response = "{\"ack\":false,\"error\":\"exception\"}";
-        queueMessage(response, 1, true, 50);
-    }
 }
 
 /**
@@ -1702,10 +1717,6 @@ void dmxTask(void * parameter) {
 }
 
 void initializeLoRaWAN() {
-  // Convert hex strings to uint64_t for EUIs
-  joinEUI = hexStringToUint64(APPEUI);
-  devEUI = hexStringToUint64(DEVEUI);
-
   Serial.println("Initializing LoRaWAN with credentials from secrets.h:");
   Serial.print("Join EUI: ");
   Serial.println(APPEUI);
@@ -1714,40 +1725,136 @@ void initializeLoRaWAN() {
   Serial.print("App Key: ");
   Serial.println(APPKEY);
   
-  // Initialize LoRa
-  if (!lora->begin(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RESET_PIN, LORA_BUSY_PIN)) {
-    Serial.println("LoRa initialization failed!");
-    return;
-  }
+  // Create LoRa configuration for LoRaManager2 (matching working example)
+  LoraConfig loraConfig;
+  loraConfig.devEui = DEVEUI;
+  loraConfig.appEui = APPEUI;
+  loraConfig.appKey = APPKEY;
+  loraConfig.region = US915;
+  loraConfig.deviceClass = LORA_CLASS_C;  // Start in Class C mode for immediate downlinks
+  loraConfig.subBand = 2;  // TTN US915 uses subband 2
+  loraConfig.adrEnabled = false;
+  loraConfig.dataRate = 4;  // DR4 = max payload 129 bytes
+  loraConfig.txPower = 14;
+  loraConfig.joinTrials = 5;
+  loraConfig.publicNetwork = true;
   
-  // Set the credentials using hex strings directly
-  if (!lora->setCredentialsHex(joinEUI, devEUI, APPKEY, NWKKEY)) {
-    Serial.println("Failed to set credentials!");
-    return;
-  }
+  // Create hardware configuration for Heltec LoRa 32 V3 (using defaults)
+  HardwareConfig hwConfig;  // Uses defaults for Heltec LoRa 32 V3
   
-  // Set downlink callback
-  lora->setDownlinkCallback(handleDownlinkCallback);
-  
-  // Try to join the network
-  Serial.println("Attempting to join LoRaWAN network...");
-  if (lora->joinNetwork()) {
-    Serial.println("Successfully joined the network!");
+  // Set up event callbacks (matching working Class C example structure)
+  lora.onJoined([]() {
+    Serial.println("=================================================");
+    Serial.println("[LoRaWAN] 🎉 NETWORK JOINED SUCCESSFULLY! 🎉");
+    Serial.println("[LoRaWAN] Class C mode is now active - device listening continuously");
+    Serial.printf("[LoRaWAN] Join attempts used: %d\n", 1);
+    Serial.println("=================================================");
+    
     isConnected = true;
     
-    // Switch to Class C mode for continuous reception
-    Serial.println("Switching to Class C mode for immediate downlink reception...");
-    if (lora->setDeviceClass(DEVICE_CLASS_C)) {
-      Serial.println("Successfully switched to Class C mode!");
-      Serial.println("Device is now in continuous reception mode and can receive DMX commands at any time");
-    } else {
-      Serial.println("Failed to switch to Class C mode, staying in Class A");
-    }
-  } else {
-    Serial.println("Failed to join network, will retry later");
+    // Start hardware-timed periodic uplinks immediately after join (like working example)
+    delay(1000);  // Small delay like working example
+    uplinkTicker.attach(20, send_lora_frame);  // 20 seconds interval exactly like working example
+    Serial.println("[LoRaWAN] Periodic uplink ticker started (20s interval)");
+    
+    // Reset heartbeat timing for any remaining software-based timing
+    lastHeartbeat = millis();
+  });
+  
+  lora.onJoinFailed([]() {
+    Serial.println("[LoRaWAN] Failed to join LoRaWAN network");
+    isConnected = false;
     lastConnectionAttempt = millis();
+  });
+  
+  lora.onClassChanged([](uint8_t newClass) {
+    Serial.print("[LoRaWAN] Device class changed to: ");
+    Serial.println((char)('A' + newClass));
+    if (newClass == 2) { // Class C
+      Serial.println("[LoRaWAN] ✅ True Class C mode activated - downlinks available anytime!");
+    }
+  });
+  
+  // Use the library's built-in downlink processing but keep our custom handler for complex commands
+  lora.onDownlink(handleDownlinkCallback);
+  
+  // Add specific command callbacks for common operations (like the working example)
+  lora.onCommand("ping", [](const String& command, const JsonObject& payload) {
+    Serial.println("[LoRaWAN] Ping command received - Class C response confirmed!");
+    
+    // Blink LED to show ping received
+    DmxController::blinkLED(LED_PIN, 3, 200);
+    
+    // Send ping response
+    if (loraInitialized && lora.isJoined()) {
+      String response = "{\"ping_response\":\"ok\",\"class\":\"C\"}";
+      if (lora.send((const uint8_t*)response.c_str(), response.length(), 1)) {
+        Serial.println("[LoRaWAN] Ping response sent");
+      }
+    }
+  });
+  
+  lora.onCommand("status", [](const String& command, const JsonObject& payload) {
+    Serial.println("[LoRaWAN] Status command - device operational in Class C");
+    
+    // Send status response with DMX info
+    if (loraInitialized && lora.isJoined()) {
+      String response = "{\"status\":\"ok\",\"class\":\"C\",\"dmx_fixtures\":" + String(dmx ? dmx->getNumFixtures() : 0) + "}";
+      if (lora.send((const uint8_t*)response.c_str(), response.length(), 1)) {
+        Serial.println("[LoRaWAN] Status response sent");
+      }
+    }
+  });
+  
+  lora.onCommand("test", [](const String& command, const JsonObject& payload) {
+    Serial.println("[LoRaWAN] Test command received - setting all fixtures to green");
+    
+    if (dmxInitialized && dmx != NULL) {
+      // Configure test fixtures if none exist
+      if (dmx->getNumFixtures() == 0) {
+        Serial.println("Setting up default test fixtures for command test");
+        dmx->initializeFixtures(4, 4);
+        dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+        dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+        dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+        dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+      }
+      
+      // Set all fixtures to green
+      for (int i = 0; i < dmx->getNumFixtures(); i++) {
+        dmx->setFixtureColor(i, 0, 255, 0, 0);
+      }
+      dmx->sendData();
+      dmx->saveSettings();
+      
+      DmxController::blinkLED(LED_PIN, 2, 200);
+      Serial.println("[LoRaWAN] Test command completed - all fixtures set to green");
+    }
+  });
+  
+  lora.onTxComplete([](bool success) {
+    if (success) {
+      Serial.println("[LoRaWAN] Transmission completed successfully!");
+    } else {
+      Serial.println("[LoRaWAN] ❌ Transmission failed!");
+    }
+  });
+  
+  // Print hardware pin configuration (like the working example)
+  Serial.println("[App] Configuring hardware pins...");
+  Serial.printf("[App] Pin mapping - RESET:%d NSS:%d SCK:%d MISO:%d MOSI:%d DIO1:%d BUSY:%d\n", 
+                hwConfig.resetPin, hwConfig.nssPin, hwConfig.sckPin, 
+                hwConfig.misoPin, hwConfig.mosiPin, hwConfig.dio1Pin, hwConfig.busyPin);
+  
+  // Initialize LoRa with configuration
+  if (!lora.begin(loraConfig, hwConfig)) {
+    Serial.println("[App] ❌ LoraManager initialization failed!");
+    Serial.println("[App] Check your configuration and try again.");
+    return;
   }
   
+  Serial.println("[App] LoRaWAN initialization completed. Device will attempt to join...");
+  Serial.println("[App] Setup completed - waiting for join...");
   loraInitialized = true;
 }
 
@@ -1771,9 +1878,6 @@ void setup() {
         Serial.println("Failed to create DMX mutex!");
         return;
     }
-    
-    // Initialize LoRa manager
-    lora = new LoRaManager();
     
     // Initialize LoRaWAN with credentials from secrets.h
     initializeLoRaWAN();
@@ -1802,64 +1906,17 @@ void loop() {
   esp_task_wdt_reset();
   
   // Handle LoRaWAN events
-  if (loraInitialized && lora != NULL) {
-    lora->handleEvents();
+  if (loraInitialized) {
+    lora.loop();
     
-    // Check connection state and retry if needed
-    if (!isConnected && millis() - lastConnectionAttempt >= CONNECTION_RETRY_INTERVAL) {
-        lastConnectionAttempt = millis();
-        Serial.println("Attempting to reconnect to LoRaWAN network...");
-        if (lora->joinNetwork()) {
-            isConnected = true;
-            Serial.println("Successfully joined the network!");
-            
-            // Try to switch to Class C after successful join
-            Serial.println("Switching to Class C mode after reconnection...");
-            if (lora->setDeviceClass(DEVICE_CLASS_C)) {
-                Serial.println("Successfully switched to Class C mode!");
-            } else {
-                Serial.println("Failed to switch to Class C mode, staying in Class A");
-            }
-        }
-    }
-    
-    // Ensure device stays in Class C mode if already connected
-    if (isConnected && lora->getDeviceClass() != DEVICE_CLASS_C) {
-        // If we're connected but not in Class C, try to switch
-        static unsigned long lastClassCAttempt = 0;
-        if (millis() - lastClassCAttempt >= 60000) {  // Try every minute
-            lastClassCAttempt = millis();
-            Serial.println("Device not in Class C mode. Attempting to switch...");
-            if (lora->setDeviceClass(DEVICE_CLASS_C)) {
-                Serial.println("Successfully switched to Class C mode!");
-            } else {
-                Serial.println("Failed to switch to Class C mode");
-            }
-        }
-    }
+    // Update connection state based on LoRaManager2 status
+    isConnected = lora.isJoined();
     
     // Process message queue periodically
     processMessageQueue();
   }
   
-  // Send a heartbeat ping every 60 seconds
-  if (currentMillis - lastHeartbeat >= 60000) {
-    lastHeartbeat = currentMillis;
-    
-    if (loraInitialized && lora != NULL) {
-        // Show device class in console
-        Serial.print("Current device class: ");
-        char deviceClass = lora->getDeviceClass();
-        Serial.println(deviceClass);
-        
-        // Include device class and connection status in heartbeat message
-        String message = "{\"hb\":1,\"class\":\"" + String(deviceClass) + "\"}";
-        // Queue heartbeat with low priority (200)
-        queueMessage(message, 1, true, 200);
-    }
-  }
-  
-  // Only update DMX data when changed (no periodic refresh here since it's handled by the dedicated task)
+  // Handle DMX patterns and rainbow demo (still needed for local control)
   if (runningRainbowDemo && dmxInitialized && dmx != NULL) {
     if (currentMillis - lastRainbowStep >= rainbowStepDelay) {
       lastRainbowStep = currentMillis;
@@ -1880,7 +1937,44 @@ void loop() {
     patternHandler.update();
   }
   
-  // Yield to allow other tasks to run
-  delay(1);
+  // Small delay to prevent watchdog issues (like working example)
+  delay(100);
+}
+
+void send_lora_frame() {
+    if (!lora.isJoined()) {
+        Serial.println("[App] ⏳ Not joined yet, skipping transmission...");
+        return;
+    }
+    
+    static uint32_t count = 0;
+    static uint32_t count_fail = 0;
+    
+    count++;
+    Serial.printf("[App] 📡 Sending heartbeat frame #%d\\n", count);
+    
+    // Create payload matching working example exactly
+    uint8_t payload[6];
+    uint32_t i = 0;
+    payload[i++] = (uint8_t)(count >> 24);
+    payload[i++] = (uint8_t)(count >> 16);
+    payload[i++] = (uint8_t)(count >> 8);
+    payload[i++] = (uint8_t)count;
+    payload[i++] = 0xC5; // Class C indicator
+    payload[i++] = (uint8_t)(dmx ? dmx->getNumFixtures() : 0); // DMX fixture count
+    
+    Serial.print("[App] Payload: ");
+    for (uint8_t j = 0; j < sizeof(payload); j++) {
+        Serial.printf("%02X ", payload[j]);
+    }
+    Serial.println();
+    
+    if (lora.send(payload, sizeof(payload), 2)) {  // Use port 2 like working example
+        Serial.println("[App] ✅ Packet enqueued successfully");
+    } else {
+        count_fail++;
+        Serial.println("[App] ❌ Packet send failed");
+        Serial.printf("[App] ⚠️ Total failed transmissions: %d\\n", count_fail);
+    }
 }
 

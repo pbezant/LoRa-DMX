@@ -36,12 +36,13 @@ This document tracks current development tasks, their status, and associated req
     *   **PRD Link:** N/A
 
 *   **Task ID:** WRAP-001
-    *   **Description:** Develop `LoRaManager` and `DmxController` wrapper libraries.
+    *   **Description:** ~~Develop `LoRaManager` and `DmxController` wrapper libraries.~~ **REPLACED BY MIGRATION-001**
     *   **Assignee:** [Developer Name]
     *   **Requirements/Acceptance Criteria:**
-        *   Simplify API for main application logic.
-        *   Encapsulate library-specific configurations.
+        *   ~~Simplify API for main application logic.~~
+        *   ~~Encapsulate library-specific configurations.~~
     *   **PRD Link:** N/A
+    *   **Status:** Superseded by migration to LoRaManager2
 
 *   **Task ID:** PATTERN-001
     *   **Description:** Implement basic light pattern command (e.g., `{"pattern": "strobe"}`).
@@ -58,6 +59,20 @@ This document tracks current development tasks, their status, and associated req
     *   **Assignee:** [Developer Name]
     *   **Completion Date:** [Date]
     *   **Link to PR/Commit:** [Initial Commit Link]
+
+*   **Task ID:** MIGRATION-001
+    *   **Description:** Replace current LoRaManager implementation with LoRaManager2 library from https://github.com/pbezant/LoraManager2.git
+    *   **Assignee:** AI Assistant
+    *   **Requirements/Acceptance Criteria:**
+        *   ✅ Remove old LoRaManager dependencies and files
+        *   ✅ Update platformio.ini to properly use LoRaManager2 library
+        *   ✅ Refactor main.cpp to use new LoRaManager2 API
+        *   ✅ Preserve all existing functionality (Class C mode, JSON command processing, callbacks)
+        *   ✅ Ensure device still joins TTN and receives downlinks correctly
+        *   ✅ Maintain DMX integration and all existing command types
+    *   **Completion Date:** December 2024
+    *   **Status:** Completed - All API calls updated, event-driven architecture implemented, Class C mode configured
+    *   **Notes:** Successfully migrated to LoRaManager2 with improved maintainability and built-in Class C support
 
 ## Future/Backlog (Beyond Current Sprint)
 
