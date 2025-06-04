@@ -237,15 +237,15 @@ For more control over pattern behavior, you can specify parameters:
          "channels": [0, 255, 0, 0]
        },
        {
-         "address": 2,
+         "address": 5,
          "channels": [0, 255, 0, 0]
        },
        {
-         "address": 3,
+         "address": 9,
          "channels": [0, 255, 0, 0]
        },
        {
-         "address": 4,
+         "address": 13,
          "channels": [0, 255, 0, 0]
        }
      ]
@@ -263,15 +263,15 @@ For more control over pattern behavior, you can specify parameters:
          "channels": [255, 0, 0, 0]    // Red
        },
        {
-         "address": 2,
+         "address": 5,
          "channels": [0, 255, 0, 0]    // Green
        },
        {
-         "address": 3,
+         "address": 9,
          "channels": [0, 0, 255, 0]    // Blue
        },
        {
-         "address": 4,
+         "address": 13,
          "channels": [255, 255, 0, 0]  // Yellow
        }
      ]
@@ -307,27 +307,27 @@ For more control over pattern behavior, you can specify parameters:
          "channels": [255, 0, 0, 0]     // Red
        },
        {
-         "address": 2,
+         "address": 5,
          "channels": [255, 165, 0, 0]   // Orange
        },
        {
-         "address": 3,
+         "address": 9,
          "channels": [255, 255, 0, 0]   // Yellow
        },
        {
-         "address": 4,
+         "address": 13,
          "channels": [0, 255, 0, 0]     // Green
        },
        {
-         "address": 5,
+         "address": 17,
          "channels": [0, 0, 255, 0]     // Blue
        },
        {
-         "address": 6,
+         "address": 21,
          "channels": [75, 0, 130, 0]    // Indigo
        },
        {
-         "address": 7,
+         "address": 25,
          "channels": [143, 0, 255, 0]   // Violet
        }
      ]

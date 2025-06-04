@@ -1178,33 +1178,128 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
         switch (cmd) {
           case 0:
             Serial.println("COMMAND: Turn all fixtures OFF");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to OFF (0,0,0,0)");
               dmx->setFixtureColor(i, 0, 0, 0, 0);
             }
+            Serial.println("DEBUG: All fixtures turned OFF, sending DMX data...");
             break;
           case 1:
             Serial.println("COMMAND: Set all fixtures to RED");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to RED (255,0,0,0)");
               dmx->setFixtureColor(i, 255, 0, 0, 0);
             }
+            Serial.println("DEBUG: All fixtures set to RED, sending DMX data...");
             break;
           case 2:
             Serial.println("COMMAND: Set all fixtures to GREEN");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to GREEN (0,255,0,0)");
               dmx->setFixtureColor(i, 0, 255, 0, 0);
             }
+            Serial.println("DEBUG: All fixtures set to GREEN, sending DMX data...");
             break;
           case 3:
             Serial.println("COMMAND: Set all fixtures to BLUE");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to BLUE (0,0,255,0)");
               dmx->setFixtureColor(i, 0, 0, 255, 0);
             }
+            Serial.println("DEBUG: All fixtures set to BLUE, sending DMX data...");
             break;
           case 4:
             Serial.println("COMMAND: Set all fixtures to WHITE");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to WHITE (0,0,0,255)");
               dmx->setFixtureColor(i, 0, 0, 0, 255);
             }
+            Serial.println("DEBUG: All fixtures set to WHITE, sending DMX data...");
             break;
         }
         
@@ -1306,19 +1401,32 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
   // NEW: Handle compact binary lights format from chirpstack_codec.js
   // Format: [numLights, address1, ch1, ch2, ch3, ch4, address2, ch1, ch2, ch3, ch4, ...]
   if (size >= 6 && size <= 127) { // Reasonable size for lights data (1-25 lights max)
+    Serial.println("DEBUG: Size check passed for compact binary format");
+    Serial.print("DEBUG: Payload size = ");
+    Serial.println(size);
+    
     uint8_t numLights = data[0];
+    Serial.print("DEBUG: First byte (numLights) = ");
+    Serial.println(numLights);
     
     // Check if the payload size matches the expected format
     size_t expectedSize = 1 + (numLights * 5); // 1 byte for count + 5 bytes per light (address + 4 channels)
+    Serial.print("DEBUG: Expected size = 1 + (");
+    Serial.print(numLights);
+    Serial.print(" * 5) = ");
+    Serial.println(expectedSize);
     
     if (size == expectedSize && numLights > 0 && numLights <= 25) {
-      Serial.println("COMPACT BINARY LIGHTS FORMAT DETECTED!");
+      Serial.println("✅ COMPACT BINARY LIGHTS FORMAT DETECTED!");
       Serial.print("Number of lights: ");
       Serial.println(numLights);
       
       if (dmxInitialized && dmx != NULL) {
+        Serial.println("DEBUG: DMX is initialized, proceeding with compact binary processing");
+        
         // Take mutex before modifying DMX data
         if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+          Serial.println("DEBUG: DMX mutex acquired successfully");
           bool success = false;
           
           // Process each light in the compact format
@@ -1331,7 +1439,7 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
             uint8_t ch3 = data[offset + 3];
             uint8_t ch4 = data[offset + 4];
             
-            Serial.print("Light ");
+            Serial.print("🔥 Processing Light ");
             Serial.print(i + 1);
             Serial.print(": Address=");
             Serial.print(address);
