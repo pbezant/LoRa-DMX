@@ -123,6 +123,52 @@ Add the following JavaScript code to your TTN application's payload formatters s
 // Or use the file included in this repository
 ```
 
+## ChirpStack Payload Codec (chirpstack_codec.js)
+
+This project now includes a dedicated ChirpStack-compatible payload codec: `chirpstack_codec.js`.
+
+### Purpose
+- **encodeDownlink(input):** Encodes application JSON commands into a compact byte array for LoRaWAN downlink to the device.
+- **decodeUplink(input):** Decodes uplink byte payloads from the device into structured JSON for ChirpStack.
+
+### Usage
+- Upload `chirpstack_codec.js` to your ChirpStack Application's Payload Codec section.
+- ChirpStack will automatically use `encodeDownlink` for downlinks and `decodeUplink` for uplinks.
+
+### Downlink Encoding (encodeDownlink)
+- Supports complex DMX control via JSON:
+  ```json
+  {
+    "lights": [
+      { "address": 1, "channels": [255, 0, 0, 0] },
+      { "address": 2, "channels": [0, 255, 0, 0] }
+    ]
+  }
+  ```
+- Encodes the number of lights, each address, and 4 channel values per light into a compact byte array.
+- Handles errors (e.g., malformed input) gracefully, returning an empty payload if invalid.
+
+### Uplink Decoding (decodeUplink)
+- Decodes device status, sensor, or DMX state reports from bytes to JSON.
+- Example decoded uplink:
+  ```json
+  {
+    "data": {
+      "dmxStatus": { "numberOfLights": 2 },
+      "lights": [
+        { "address": 1, "channels": [255, 0, 0, 0] },
+        { "address": 2, "channels": [0, 255, 0, 0] }
+      ]
+    }
+  }
+  ```
+- Handles unknown or malformed payloads with warnings and error fields.
+
+### Error Handling
+- Both functions provide robust error handling and will not crash ChirpStack if given unexpected input.
+
+---
+
 ## Simple Command Format
 
 For quick testing, the payload formatter supports simplified commands:

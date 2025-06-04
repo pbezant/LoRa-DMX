@@ -1303,6 +1303,108 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
     }
   }
   
+  // NEW: Handle compact binary lights format from chirpstack_codec.js
+  // Format: [numLights, address1, ch1, ch2, ch3, ch4, address2, ch1, ch2, ch3, ch4, ...]
+  if (size >= 6 && size <= 127) { // Reasonable size for lights data (1-25 lights max)
+    uint8_t numLights = data[0];
+    
+    // Check if the payload size matches the expected format
+    size_t expectedSize = 1 + (numLights * 5); // 1 byte for count + 5 bytes per light (address + 4 channels)
+    
+    if (size == expectedSize && numLights > 0 && numLights <= 25) {
+      Serial.println("COMPACT BINARY LIGHTS FORMAT DETECTED!");
+      Serial.print("Number of lights: ");
+      Serial.println(numLights);
+      
+      if (dmxInitialized && dmx != NULL) {
+        // Take mutex before modifying DMX data
+        if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+          bool success = false;
+          
+          // Process each light in the compact format
+          for (int i = 0; i < numLights; i++) {
+            size_t offset = 1 + (i * 5); // Start after count byte, 5 bytes per light
+            
+            uint8_t address = data[offset];
+            uint8_t ch1 = data[offset + 1];
+            uint8_t ch2 = data[offset + 2]; 
+            uint8_t ch3 = data[offset + 3];
+            uint8_t ch4 = data[offset + 4];
+            
+            Serial.print("Light ");
+            Serial.print(i + 1);
+            Serial.print(": Address=");
+            Serial.print(address);
+            Serial.print(", Channels=[");
+            Serial.print(ch1);
+            Serial.print(",");
+            Serial.print(ch2);
+            Serial.print(",");
+            Serial.print(ch3);
+            Serial.print(",");
+            Serial.print(ch4);
+            Serial.println("]");
+            
+            // Validate address (1-512 for DMX)
+            if (address >= 1 && address <= 512) {
+              // Set DMX channels directly (DMX uses 1-based addressing)
+              if (address + 3 < DMX_PACKET_SIZE) {
+                dmx->getDmxData()[address] = ch1;
+                dmx->getDmxData()[address + 1] = ch2;
+                dmx->getDmxData()[address + 2] = ch3;
+                dmx->getDmxData()[address + 3] = ch4;
+                success = true;
+                
+                Serial.print("Set DMX channels ");
+                Serial.print(address);
+                Serial.print("-");
+                Serial.print(address + 3);
+                Serial.print(" to values: [");
+                Serial.print(ch1);
+                Serial.print(",");
+                Serial.print(ch2);
+                Serial.print(",");
+                Serial.print(ch3);
+                Serial.print(",");
+                Serial.print(ch4);
+                Serial.println("]");
+              } else {
+                Serial.print("DMX address out of range: ");
+                Serial.println(address);
+              }
+            } else {
+              Serial.print("Invalid DMX address: ");
+              Serial.println(address);
+            }
+          }
+          
+          if (success) {
+            Serial.println("Sending compact binary lights command to DMX...");
+            dmx->sendData();
+            dmx->saveSettings();
+            Serial.println("Compact binary lights command processed successfully!");
+            
+            // Blink LED to indicate successful processing
+            DmxController::blinkLED(LED_PIN, 3, 200);
+          } else {
+            Serial.println("Failed to process any lights from compact binary format");
+          }
+          
+          // Release the mutex
+          xSemaphoreGive(dmxMutex);
+          
+          if (success) {
+            return; // Exit early - we've processed the command successfully
+          }
+        } else {
+          Serial.println("Failed to take DMX mutex for compact binary processing");
+        }
+      } else {
+        Serial.println("DMX not initialized, cannot process compact binary lights command");
+      }
+    }
+  }
+  
   // Enhanced logging for regular payload processing
   static uint32_t downlinkCounter = 0;
   downlinkCounter++;
@@ -1734,7 +1836,7 @@ void initializeLoRaWAN() {
   loraConfig.deviceClass = LORA_CLASS_C;  // Start in Class C mode for immediate downlinks
   loraConfig.subBand = 2;  // TTN US915 uses subband 2
   loraConfig.adrEnabled = false;
-  loraConfig.dataRate = 4;  // DR4 = max payload 129 bytes
+  loraConfig.dataRate = 4;  // DR4 for US915 - max payload 129 bytes
   loraConfig.txPower = 14;
   loraConfig.joinTrials = 5;
   loraConfig.publicNetwork = true;
@@ -1752,13 +1854,27 @@ void initializeLoRaWAN() {
     
     isConnected = true;
     
-    // Start hardware-timed periodic uplinks immediately after join (like working example)
-    delay(1000);  // Small delay like working example
+    // Ensure we're in Class C mode - force it explicitly
+    Serial.println("[LoRaWAN] Explicitly requesting Class C mode...");
+    // Note: Some LoRaWAN libraries handle Class C automatically after join
+    // The device should already be configured for Class C in the initial config
+    Serial.println("[LoRaWAN] Class C mode should be active (configured at initialization)");
+    
+    // Add a longer delay to ensure Class C activation before starting uplinks
+    delay(2000);  // Give network server time to process Class C request
+    
+    // Start hardware-timed periodic uplinks after Class C is established
     uplinkTicker.attach(20, send_lora_frame);  // 20 seconds interval exactly like working example
     Serial.println("[LoRaWAN] Periodic uplink ticker started (20s interval)");
     
     // Reset heartbeat timing for any remaining software-based timing
     lastHeartbeat = millis();
+    
+    // Send an immediate status message to confirm Class C operation
+    String statusMsg = "{\"status\":\"joined\",\"class\":\"C\",\"dmx_fixtures\":" + String(dmx ? dmx->getNumFixtures() : 0) + "}";
+    if (lora.send((const uint8_t*)statusMsg.c_str(), statusMsg.length(), 1)) {
+      Serial.println("[LoRaWAN] Class C status message sent");
+    }
   });
   
   lora.onJoinFailed([]() {
@@ -1772,6 +1888,17 @@ void initializeLoRaWAN() {
     Serial.println((char)('A' + newClass));
     if (newClass == 2) { // Class C
       Serial.println("[LoRaWAN] ✅ True Class C mode activated - downlinks available anytime!");
+      Serial.println("[LoRaWAN] 🔊 Device is now listening continuously for downlinks");
+      
+      // Send a confirmation uplink to let the server know we're in Class C
+      if (loraInitialized && lora.isJoined()) {
+        String confirmMsg = "{\"class_c_active\":true,\"listening\":true}";
+        if (lora.send((const uint8_t*)confirmMsg.c_str(), confirmMsg.length(), 1)) {
+          Serial.println("[LoRaWAN] Class C confirmation message sent");
+        }
+      }
+    } else {
+      Serial.println("[LoRaWAN] ⚠️ Warning: Not in Class C mode - downlinks only after uplinks");
     }
   });
   

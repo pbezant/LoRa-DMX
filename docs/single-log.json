@@ -1,5 +1,5 @@
 {
-    "time": "2025-06-03T18:19:50.045550564+00:00",
+    "time": "2025-06-03T20:25:51.919080795+00:00",
     "deviceInfo": {
         "tenantId": "0c6e58d9-cd0d-4ccd-84eb-29899e100fc4",
         "tenantName": "structuresense",
@@ -16,7 +16,7 @@
     "code": "DOWNLINK_PAYLOAD_SIZE",
     "description": "Device queue-item discarded because it exceeds the max. payload size",
     "context": {
-        "queue_item_id": "fe57c017-2596-4979-a3ed-6ac3678b5f3b",
+        "queue_item_id": "ac59094b-bd86-404c-a2cb-1c4aa36cf51b",
         "item_size": "86",
         "max_payload_size": "53"
     }
