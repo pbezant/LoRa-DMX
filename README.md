@@ -108,6 +108,38 @@ Where:
 - `address`: The DMX start address of the fixture (1-512)
 - `channels`: An array of DMX channel values (0-255) for each channel, relative to the start address
 
+## Configuration Downlink: Set Number of Lights
+
+By default, the device is configured to control **25 lights** (the maximum supported in a single downlink). You can change this at any time by sending a special configuration downlink.
+
+### How to Set Number of Lights
+
+Send a downlink command in this format:
+
+```json
+{
+  "config": { "numLights": 12 }
+}
+```
+
+- This will set the device to expect/control 12 lights.
+- The value is capped between 1 and 25.
+- The device will re-initialize its fixture configuration and print debug info on the serial monitor.
+- The onboard LED will blink 4 times to confirm the change.
+
+#### Payload Format (ChirpStack/TTN)
+- The config downlink is encoded as: `[0xC0, N]` where `N` is the number of lights (1–25).
+
+#### Example
+To set the device to 8 lights:
+```json
+{
+  "config": { "numLights": 8 }
+}
+```
+
+---
+
 ## TTN Payload Formatter
 
 The included payload formatter (`ttn_payload_formatter.js`) supports multiple command types:
@@ -122,6 +154,52 @@ Add the following JavaScript code to your TTN application's payload formatters s
 // Copy the contents of ttn_payload_formatter.js here
 // Or use the file included in this repository
 ```
+
+## ChirpStack Payload Codec (chirpstack_codec.js)
+
+This project now includes a dedicated ChirpStack-compatible payload codec: `chirpstack_codec.js`.
+
+### Purpose
+- **encodeDownlink(input):** Encodes application JSON commands into a compact byte array for LoRaWAN downlink to the device.
+- **decodeUplink(input):** Decodes uplink byte payloads from the device into structured JSON for ChirpStack.
+
+### Usage
+- Upload `chirpstack_codec.js` to your ChirpStack Application's Payload Codec section.
+- ChirpStack will automatically use `encodeDownlink` for downlinks and `decodeUplink` for uplinks.
+
+### Downlink Encoding (encodeDownlink)
+- Supports complex DMX control via JSON:
+  ```json
+  {
+    "lights": [
+      { "address": 1, "channels": [255, 0, 0, 0] },
+      { "address": 2, "channels": [0, 255, 0, 0] }
+    ]
+  }
+  ```
+- Encodes the number of lights, each address, and 4 channel values per light into a compact byte array.
+- Handles errors (e.g., malformed input) gracefully, returning an empty payload if invalid.
+
+### Uplink Decoding (decodeUplink)
+- Decodes device status, sensor, or DMX state reports from bytes to JSON.
+- Example decoded uplink:
+  ```json
+  {
+    "data": {
+      "dmxStatus": { "numberOfLights": 2 },
+      "lights": [
+        { "address": 1, "channels": [255, 0, 0, 0] },
+        { "address": 2, "channels": [0, 255, 0, 0] }
+      ]
+    }
+  }
+  ```
+- Handles unknown or malformed payloads with warnings and error fields.
+
+### Error Handling
+- Both functions provide robust error handling and will not crash ChirpStack if given unexpected input.
+
+---
 
 ## Simple Command Format
 
@@ -191,15 +269,15 @@ For more control over pattern behavior, you can specify parameters:
          "channels": [0, 255, 0, 0]
        },
        {
-         "address": 2,
+         "address": 5,
          "channels": [0, 255, 0, 0]
        },
        {
-         "address": 3,
+         "address": 9,
          "channels": [0, 255, 0, 0]
        },
        {
-         "address": 4,
+         "address": 13,
          "channels": [0, 255, 0, 0]
        }
      ]
@@ -217,15 +295,15 @@ For more control over pattern behavior, you can specify parameters:
          "channels": [255, 0, 0, 0]    // Red
        },
        {
-         "address": 2,
+         "address": 5,
          "channels": [0, 255, 0, 0]    // Green
        },
        {
-         "address": 3,
+         "address": 9,
          "channels": [0, 0, 255, 0]    // Blue
        },
        {
-         "address": 4,
+         "address": 13,
          "channels": [255, 255, 0, 0]  // Yellow
        }
      ]
@@ -261,27 +339,27 @@ For more control over pattern behavior, you can specify parameters:
          "channels": [255, 0, 0, 0]     // Red
        },
        {
-         "address": 2,
+         "address": 5,
          "channels": [255, 165, 0, 0]   // Orange
        },
        {
-         "address": 3,
+         "address": 9,
          "channels": [255, 255, 0, 0]   // Yellow
        },
        {
-         "address": 4,
+         "address": 13,
          "channels": [0, 255, 0, 0]     // Green
        },
        {
-         "address": 5,
+         "address": 17,
          "channels": [0, 0, 255, 0]     // Blue
        },
        {
-         "address": 6,
+         "address": 21,
          "channels": [75, 0, 130, 0]    // Indigo
        },
        {
-         "address": 7,
+         "address": 25,
          "channels": [143, 0, 255, 0]   // Violet
        }
      ]

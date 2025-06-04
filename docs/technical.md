@@ -49,4 +49,13 @@ This document details technical specifications for various aspects of the projec
 *   **Real-time DMX:** DMX requires consistent timing. `esp_dmx` library likely handles this at a low level.
 *   **LoRaWAN Duty Cycle:** Adherence to LoRaWAN regional duty cycle limitations is critical (managed by `RadioLib` and TTN).
 *   **JSON Parsing:** `ArduinoJson` is generally efficient, but very large/complex JSON payloads could impact performance or memory on the microcontroller. Payload size is also limited by LoRaWAN constraints.
-*   **Power Consumption:** For battery-powered applications (if any), deep sleep and minimizing radio transmission time are important. (Heltec LoRa 32 V3 has Wi-Fi/Bluetooth which should be disabled if not used to save power). 
+*   **Power Consumption:** For battery-powered applications (if any), deep sleep and minimizing radio transmission time are important. (Heltec LoRa 32 V3 has Wi-Fi/Bluetooth which should be disabled if not used to save power).
+
+## Dynamic Number of Lights Configuration (Config Downlink)
+
+- The device now supports dynamic configuration of the number of DMX lights it controls.
+- By default, the device is set to control 25 lights (the maximum supported in a single LoRaWAN downlink).
+- You can change this at runtime by sending a config downlink: `{ "config": { "numLights": N } }` (where N is 1–25).
+- The ChirpStack codec encodes this as `[0xC0, N]`.
+- The firmware receives this payload, sets the number of lights, re-initializes fixtures, and confirms via serial output and a 4-blink LED pattern.
+- This allows remote reconfiguration of the DMX fixture count without reflashing or rebooting the device. 

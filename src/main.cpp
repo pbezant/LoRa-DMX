@@ -124,6 +124,9 @@ TaskHandle_t dmxTaskHandle = NULL;
 // Add flag to control DMX during RX windows - set to true to continue DMX during RX windows
 bool keepDmxDuringRx = true;
 
+// Add global variable for number of lights
+uint8_t numLights = 25; // Default to max (25)
+
 // Forward declarations
 void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr);
 bool processLightsJson(JsonArray lightsArray);
@@ -1178,33 +1181,128 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
         switch (cmd) {
           case 0:
             Serial.println("COMMAND: Turn all fixtures OFF");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to OFF (0,0,0,0)");
               dmx->setFixtureColor(i, 0, 0, 0, 0);
             }
+            Serial.println("DEBUG: All fixtures turned OFF, sending DMX data...");
             break;
           case 1:
             Serial.println("COMMAND: Set all fixtures to RED");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to RED (255,0,0,0)");
               dmx->setFixtureColor(i, 255, 0, 0, 0);
             }
+            Serial.println("DEBUG: All fixtures set to RED, sending DMX data...");
             break;
           case 2:
             Serial.println("COMMAND: Set all fixtures to GREEN");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to GREEN (0,255,0,0)");
               dmx->setFixtureColor(i, 0, 255, 0, 0);
             }
+            Serial.println("DEBUG: All fixtures set to GREEN, sending DMX data...");
             break;
           case 3:
             Serial.println("COMMAND: Set all fixtures to BLUE");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to BLUE (0,0,255,0)");
               dmx->setFixtureColor(i, 0, 0, 255, 0);
             }
+            Serial.println("DEBUG: All fixtures set to BLUE, sending DMX data...");
             break;
           case 4:
             Serial.println("COMMAND: Set all fixtures to WHITE");
+            Serial.print("DEBUG: Number of configured fixtures: ");
+            Serial.println(dmx->getNumFixtures());
+            
+            if (dmx->getNumFixtures() == 0) {
+              Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures...");
+              dmx->initializeFixtures(4, 4);
+              dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+              dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+              dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+              dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+              Serial.print("DEBUG: Now have ");
+              Serial.print(dmx->getNumFixtures());
+              Serial.println(" fixtures configured");
+            }
+            
             for (int i = 0; i < dmx->getNumFixtures(); i++) {
+              Serial.print("DEBUG: Setting fixture ");
+              Serial.print(i);
+              Serial.println(" to WHITE (0,0,0,255)");
               dmx->setFixtureColor(i, 0, 0, 0, 255);
             }
+            Serial.println("DEBUG: All fixtures set to WHITE, sending DMX data...");
             break;
         }
         
@@ -1300,6 +1398,333 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
       // Blink LED to indicate successful processing
       DmxController::blinkLED(LED_PIN, 5, 200);
       return;
+    }
+  }
+  
+  // NEW: Handle compact binary lights format from chirpstack_codec.js
+  // Format: [numLights, address1, ch1, ch2, ch3, ch4, address2, ch1, ch2, ch3, ch4, ...]
+  if (size >= 6 && size <= 127 && data[0] != 0xF0 && data[0] != 0xF1) { // Reasonable size for lights data, exclude pattern markers
+    Serial.println("DEBUG: Size check passed for compact binary lights format");
+    Serial.print("DEBUG: Payload size = ");
+    Serial.println(size);
+    
+    uint8_t numLights = data[0];
+    Serial.print("DEBUG: First byte (numLights) = ");
+    Serial.println(numLights);
+    
+    // Check if the payload size matches the expected format
+    size_t expectedSize = 1 + (numLights * 5); // 1 byte for count + 5 bytes per light (address + 4 channels)
+    Serial.print("DEBUG: Expected size = 1 + (");
+    Serial.print(numLights);
+    Serial.print(" * 5) = ");
+    Serial.println(expectedSize);
+    
+    if (size == expectedSize && numLights > 0 && numLights <= 25) {
+      Serial.println("✅ COMPACT BINARY LIGHTS FORMAT DETECTED!");
+      Serial.print("Number of lights: ");
+      Serial.println(numLights);
+      
+      if (dmxInitialized && dmx != NULL) {
+        Serial.println("DEBUG: DMX is initialized, proceeding with compact binary processing");
+        
+        // Take mutex before modifying DMX data
+        if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+          Serial.println("DEBUG: DMX mutex acquired successfully");
+          bool success = false;
+          
+          // Process each light in the compact format
+          for (int i = 0; i < numLights; i++) {
+            size_t offset = 1 + (i * 5); // Start after count byte, 5 bytes per light
+            
+            uint8_t address = data[offset];
+            uint8_t ch1 = data[offset + 1];
+            uint8_t ch2 = data[offset + 2]; 
+            uint8_t ch3 = data[offset + 3];
+            uint8_t ch4 = data[offset + 4];
+            
+            Serial.print("🔥 Processing Light ");
+            Serial.print(i + 1);
+            Serial.print(": Address=");
+            Serial.print(address);
+            Serial.print(", Channels=[");
+            Serial.print(ch1);
+            Serial.print(",");
+            Serial.print(ch2);
+            Serial.print(",");
+            Serial.print(ch3);
+            Serial.print(",");
+            Serial.print(ch4);
+            Serial.println("]");
+            
+            // Validate address (1-512 for DMX)
+            if (address >= 1 && address <= 512) {
+              // Set DMX channels directly (DMX uses 1-based addressing)
+              if (address + 3 < DMX_PACKET_SIZE) {
+                dmx->getDmxData()[address] = ch1;
+                dmx->getDmxData()[address + 1] = ch2;
+                dmx->getDmxData()[address + 2] = ch3;
+                dmx->getDmxData()[address + 3] = ch4;
+                success = true;
+                
+                Serial.print("Set DMX channels ");
+                Serial.print(address);
+                Serial.print("-");
+                Serial.print(address + 3);
+                Serial.print(" to values: [");
+                Serial.print(ch1);
+                Serial.print(",");
+                Serial.print(ch2);
+                Serial.print(",");
+                Serial.print(ch3);
+                Serial.print(",");
+                Serial.print(ch4);
+                Serial.println("]");
+              } else {
+                Serial.print("DMX address out of range: ");
+                Serial.println(address);
+              }
+            } else {
+              Serial.print("Invalid DMX address: ");
+              Serial.println(address);
+            }
+          }
+          
+          if (success) {
+            Serial.println("Sending compact binary lights command to DMX...");
+            dmx->sendData();
+            dmx->saveSettings();
+            Serial.println("Compact binary lights command processed successfully!");
+            
+            // Blink LED to indicate successful processing
+            DmxController::blinkLED(LED_PIN, 3, 200);
+          } else {
+            Serial.println("Failed to process any lights from compact binary format");
+          }
+          
+          // Release the mutex
+          xSemaphoreGive(dmxMutex);
+          
+          if (success) {
+            return; // Exit early - we've processed the command successfully
+          }
+        } else {
+          Serial.println("Failed to take DMX mutex for compact binary processing");
+        }
+      } else {
+        Serial.println("DMX not initialized, cannot process compact binary lights command");
+      }
+    }
+  }
+  
+  // NEW: Handle compact binary pattern commands from chirpstack_codec.js  
+  // Pattern format: [0xF1, type, speed_low, speed_high, cycles_low, cycles_high] = 6 bytes
+  // Pattern stop: [0xF0] = 1 byte
+  if (size == 1 && data[0] == 0xF0) {
+    Serial.println("🎵 COMPACT BINARY PATTERN STOP COMMAND DETECTED!");
+    
+    // Stop any running pattern
+    if (patternHandler.isActive()) {
+      patternHandler.stop();
+      Serial.println("✅ Pattern stopped successfully");
+    } else {
+      Serial.println("ℹ️ No pattern was running");
+    }
+    
+    // Blink LED to indicate successful processing
+    DmxController::blinkLED(LED_PIN, 2, 200);
+    return; // Exit early - command processed
+  }
+  
+  if (size == 6 && data[0] == 0xF1) {
+    Serial.println("🎵 COMPACT BINARY PATTERN COMMAND DETECTED!");
+    
+    uint8_t patternType = data[1];
+    uint16_t speed = data[2] | (data[3] << 8);  // Little endian 16-bit
+    uint16_t cycles = data[4] | (data[5] << 8); // Little endian 16-bit
+    
+    Serial.print("Pattern Type: ");
+    Serial.print(patternType);
+    Serial.print(" (");
+    
+    DmxPattern::PatternType enumType;
+    String typeName;
+    
+    switch (patternType) {
+      case 0:
+        enumType = DmxPattern::COLOR_FADE;
+        typeName = "COLOR_FADE";
+        break;
+      case 1:
+        enumType = DmxPattern::RAINBOW;
+        typeName = "RAINBOW";
+        break;
+      case 2:
+        enumType = DmxPattern::STROBE;
+        typeName = "STROBE";
+        break;
+      case 3:
+        enumType = DmxPattern::CHASE;
+        typeName = "CHASE";
+        break;
+      case 4:
+        enumType = DmxPattern::ALTERNATE;
+        typeName = "ALTERNATE";
+        break;
+      default:
+        enumType = DmxPattern::COLOR_FADE;
+        typeName = "COLOR_FADE (default)";
+        break;
+    }
+    
+    Serial.print(typeName);
+    Serial.print("), Speed: ");
+    Serial.print(speed);
+    Serial.print("ms, Cycles: ");
+    Serial.println(cycles);
+    
+    // Initialize fixtures if needed
+    if (dmxInitialized && dmx != NULL) {
+      if (dmx->getNumFixtures() == 0) {
+        Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures for pattern...");
+        dmx->initializeFixtures(4, 4);
+        dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+        dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+        dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+        dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+        Serial.print("DEBUG: Now have ");
+        Serial.print(dmx->getNumFixtures());
+        Serial.println(" fixtures configured for patterns");
+      }
+      
+      // Start the pattern
+      patternHandler.start(enumType, speed, cycles);
+      Serial.print("🎨 Pattern started: ");
+      Serial.print(typeName);
+      Serial.print(" at ");
+      Serial.print(speed);
+      Serial.print("ms speed for ");
+      Serial.print(cycles);
+      Serial.println(" cycles");
+      
+      // Blink LED to indicate successful processing
+      DmxController::blinkLED(LED_PIN, 3, 200);
+      return; // Exit early - command processed
+    } else {
+      Serial.println("❌ DMX not initialized, cannot start pattern");
+    }
+  }
+  
+  // NEW: Handle compact binary lights format from chirpstack_codec.js
+  if (size >= 6 && size <= 127) { // Reasonable size for lights data (1-25 lights max)
+    Serial.println("DEBUG: Size check passed for compact binary format");
+    Serial.print("DEBUG: Payload size = ");
+    Serial.println(size);
+    
+    uint8_t numLights = data[0];
+    Serial.print("DEBUG: First byte (numLights) = ");
+    Serial.println(numLights);
+    
+    // Check if the payload size matches the expected format
+    size_t expectedSize = 1 + (numLights * 5); // 1 byte for count + 5 bytes per light (address + 4 channels)
+    Serial.print("DEBUG: Expected size = 1 + (");
+    Serial.print(numLights);
+    Serial.print(" * 5) = ");
+    Serial.println(expectedSize);
+    
+    if (size == expectedSize && numLights > 0 && numLights <= 25) {
+      Serial.println("✅ COMPACT BINARY LIGHTS FORMAT DETECTED!");
+      Serial.print("Number of lights: ");
+      Serial.println(numLights);
+      
+      if (dmxInitialized && dmx != NULL) {
+        Serial.println("DEBUG: DMX is initialized, proceeding with compact binary processing");
+        
+        // Take mutex before modifying DMX data
+        if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+          Serial.println("DEBUG: DMX mutex acquired successfully");
+          bool success = false;
+          
+          // Process each light in the compact format
+          for (int i = 0; i < numLights; i++) {
+            size_t offset = 1 + (i * 5); // Start after count byte, 5 bytes per light
+            
+            uint8_t address = data[offset];
+            uint8_t ch1 = data[offset + 1];
+            uint8_t ch2 = data[offset + 2]; 
+            uint8_t ch3 = data[offset + 3];
+            uint8_t ch4 = data[offset + 4];
+            
+            Serial.print("🔥 Processing Light ");
+            Serial.print(i + 1);
+            Serial.print(": Address=");
+            Serial.print(address);
+            Serial.print(", Channels=[");
+            Serial.print(ch1);
+            Serial.print(",");
+            Serial.print(ch2);
+            Serial.print(",");
+            Serial.print(ch3);
+            Serial.print(",");
+            Serial.print(ch4);
+            Serial.println("]");
+            
+            // Validate address (1-512 for DMX)
+            if (address >= 1 && address <= 512) {
+              // Set DMX channels directly (DMX uses 1-based addressing)
+              if (address + 3 < DMX_PACKET_SIZE) {
+                dmx->getDmxData()[address] = ch1;
+                dmx->getDmxData()[address + 1] = ch2;
+                dmx->getDmxData()[address + 2] = ch3;
+                dmx->getDmxData()[address + 3] = ch4;
+                success = true;
+                
+                Serial.print("Set DMX channels ");
+                Serial.print(address);
+                Serial.print("-");
+                Serial.print(address + 3);
+                Serial.print(" to values: [");
+                Serial.print(ch1);
+                Serial.print(",");
+                Serial.print(ch2);
+                Serial.print(",");
+                Serial.print(ch3);
+                Serial.print(",");
+                Serial.print(ch4);
+                Serial.println("]");
+              } else {
+                Serial.print("DMX address out of range: ");
+                Serial.println(address);
+              }
+            } else {
+              Serial.print("Invalid DMX address: ");
+              Serial.println(address);
+            }
+          }
+          
+          if (success) {
+            Serial.println("Sending compact binary lights command to DMX...");
+            dmx->sendData();
+            dmx->saveSettings();
+            Serial.println("Compact binary lights command processed successfully!");
+            
+            // Blink LED to indicate successful processing
+            DmxController::blinkLED(LED_PIN, 3, 200);
+          } else {
+            Serial.println("Failed to process any lights from compact binary format");
+          }
+          
+          // Release the mutex
+          xSemaphoreGive(dmxMutex);
+          
+          if (success) {
+            return; // Exit early - we've processed the command successfully
+          }
+        } else {
+          Serial.println("Failed to take DMX mutex for compact binary processing");
+        }
+      } else {
+        Serial.println("DMX not initialized, cannot process compact binary lights command");
+      }
     }
   }
   
@@ -1678,6 +2103,29 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
   Serial.println(ESP.getFreeHeap());
   
   Serial.println("==== DEBUG: EXITING DOWNLINK CALLBACK ====");
+
+  // Handle config downlink to set number of lights
+  if (size == 2 && data[0] == 0xC0) {
+    uint8_t requested = data[1];
+    if (requested < 1) requested = 1;
+    if (requested > 25) requested = 25;
+    numLights = requested;
+    Serial.print("[CONFIG] Number of lights set via downlink: ");
+    Serial.println(numLights);
+    // Optionally, re-initialize fixtures if needed
+    if (dmxInitialized && dmx != NULL) {
+      dmx->initializeFixtures(numLights, 4);
+      for (int i = 0; i < numLights; i++) {
+        int addr = 1 + i * 4;
+        dmx->setFixtureConfig(i, "Fixture", addr, addr, addr+1, addr+2, addr+3);
+      }
+      dmx->saveSettings();
+      Serial.println("[CONFIG] Fixtures re-initialized for new light count");
+    }
+    // Blink LED to indicate config change
+    DmxController::blinkLED(LED_PIN, 4, 100);
+    return;
+  }
 }
 
 /**
@@ -1734,7 +2182,7 @@ void initializeLoRaWAN() {
   loraConfig.deviceClass = LORA_CLASS_C;  // Start in Class C mode for immediate downlinks
   loraConfig.subBand = 2;  // TTN US915 uses subband 2
   loraConfig.adrEnabled = false;
-  loraConfig.dataRate = 4;  // DR4 = max payload 129 bytes
+  loraConfig.dataRate = 4;  // DR4 for US915 - max payload 129 bytes
   loraConfig.txPower = 14;
   loraConfig.joinTrials = 5;
   loraConfig.publicNetwork = true;
@@ -1752,13 +2200,27 @@ void initializeLoRaWAN() {
     
     isConnected = true;
     
-    // Start hardware-timed periodic uplinks immediately after join (like working example)
-    delay(1000);  // Small delay like working example
+    // Ensure we're in Class C mode - force it explicitly
+    Serial.println("[LoRaWAN] Explicitly requesting Class C mode...");
+    // Note: Some LoRaWAN libraries handle Class C automatically after join
+    // The device should already be configured for Class C in the initial config
+    Serial.println("[LoRaWAN] Class C mode should be active (configured at initialization)");
+    
+    // Add a longer delay to ensure Class C activation before starting uplinks
+    delay(2000);  // Give network server time to process Class C request
+    
+    // Start hardware-timed periodic uplinks after Class C is established
     uplinkTicker.attach(20, send_lora_frame);  // 20 seconds interval exactly like working example
     Serial.println("[LoRaWAN] Periodic uplink ticker started (20s interval)");
     
     // Reset heartbeat timing for any remaining software-based timing
     lastHeartbeat = millis();
+    
+    // Send an immediate status message to confirm Class C operation
+    String statusMsg = "{\"status\":\"joined\",\"class\":\"C\",\"dmx_fixtures\":" + String(dmx ? dmx->getNumFixtures() : 0) + "}";
+    if (lora.send((const uint8_t*)statusMsg.c_str(), statusMsg.length(), 1)) {
+      Serial.println("[LoRaWAN] Class C status message sent");
+    }
   });
   
   lora.onJoinFailed([]() {
@@ -1772,6 +2234,17 @@ void initializeLoRaWAN() {
     Serial.println((char)('A' + newClass));
     if (newClass == 2) { // Class C
       Serial.println("[LoRaWAN] ✅ True Class C mode activated - downlinks available anytime!");
+      Serial.println("[LoRaWAN] 🔊 Device is now listening continuously for downlinks");
+      
+      // Send a confirmation uplink to let the server know we're in Class C
+      if (loraInitialized && lora.isJoined()) {
+        String confirmMsg = "{\"class_c_active\":true,\"listening\":true}";
+        if (lora.send((const uint8_t*)confirmMsg.c_str(), confirmMsg.length(), 1)) {
+          Serial.println("[LoRaWAN] Class C confirmation message sent");
+        }
+      }
+    } else {
+      Serial.println("[LoRaWAN] ⚠️ Warning: Not in Class C mode - downlinks only after uplinks");
     }
   });
   
