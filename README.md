@@ -108,6 +108,38 @@ Where:
 - `address`: The DMX start address of the fixture (1-512)
 - `channels`: An array of DMX channel values (0-255) for each channel, relative to the start address
 
+## Configuration Downlink: Set Number of Lights
+
+By default, the device is configured to control **25 lights** (the maximum supported in a single downlink). You can change this at any time by sending a special configuration downlink.
+
+### How to Set Number of Lights
+
+Send a downlink command in this format:
+
+```json
+{
+  "config": { "numLights": 12 }
+}
+```
+
+- This will set the device to expect/control 12 lights.
+- The value is capped between 1 and 25.
+- The device will re-initialize its fixture configuration and print debug info on the serial monitor.
+- The onboard LED will blink 4 times to confirm the change.
+
+#### Payload Format (ChirpStack/TTN)
+- The config downlink is encoded as: `[0xC0, N]` where `N` is the number of lights (1–25).
+
+#### Example
+To set the device to 8 lights:
+```json
+{
+  "config": { "numLights": 8 }
+}
+```
+
+---
+
 ## TTN Payload Formatter
 
 The included payload formatter (`ttn_payload_formatter.js`) supports multiple command types:

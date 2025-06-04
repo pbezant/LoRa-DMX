@@ -1,6 +1,8 @@
 // TTN Payload Formatters for DMX LoRa Control System
 // Copy and paste these functions into the TTN console under your application settings
 
+// [ADDED FEATURE] The device now supports a config downlink ([0xC0, N]) to set the number of DMX lights at runtime (default 25). See README and technical.md for details.
+
 // Uplink decoder function (device to application)
 function decodeUplink(input) {
     // Try to parse as JSON first

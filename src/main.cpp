@@ -124,6 +124,9 @@ TaskHandle_t dmxTaskHandle = NULL;
 // Add flag to control DMX during RX windows - set to true to continue DMX during RX windows
 bool keepDmxDuringRx = true;
 
+// Add global variable for number of lights
+uint8_t numLights = 25; // Default to max (25)
+
 // Forward declarations
 void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr);
 bool processLightsJson(JsonArray lightsArray);
@@ -2100,6 +2103,29 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
   Serial.println(ESP.getFreeHeap());
   
   Serial.println("==== DEBUG: EXITING DOWNLINK CALLBACK ====");
+
+  // Handle config downlink to set number of lights
+  if (size == 2 && data[0] == 0xC0) {
+    uint8_t requested = data[1];
+    if (requested < 1) requested = 1;
+    if (requested > 25) requested = 25;
+    numLights = requested;
+    Serial.print("[CONFIG] Number of lights set via downlink: ");
+    Serial.println(numLights);
+    // Optionally, re-initialize fixtures if needed
+    if (dmxInitialized && dmx != NULL) {
+      dmx->initializeFixtures(numLights, 4);
+      for (int i = 0; i < numLights; i++) {
+        int addr = 1 + i * 4;
+        dmx->setFixtureConfig(i, "Fixture", addr, addr, addr+1, addr+2, addr+3);
+      }
+      dmx->saveSettings();
+      Serial.println("[CONFIG] Fixtures re-initialized for new light count");
+    }
+    // Blink LED to indicate config change
+    DmxController::blinkLED(LED_PIN, 4, 100);
+    return;
+  }
 }
 
 /**

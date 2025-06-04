@@ -222,6 +222,17 @@ function encodeDownlink(input) {
     // END MODIFICATION FOR COMPACT BYTE ENCODING
   }
 
+  // CASE 6: Config downlink for number of lights
+  if (input.data.config && typeof input.data.config.numLights === 'number') {
+    var n = input.data.config.numLights;
+    if (n < 1) n = 1;
+    if (n > 25) n = 25;
+    return {
+      bytes: [0xC0, n],
+      fPort: input.fPort || 1
+    };
+  }
+
   // Fallback - any other data is converted to a string and sent
   if (typeof input.data === 'object') {
     var jsonString = JSON.stringify(input.data);

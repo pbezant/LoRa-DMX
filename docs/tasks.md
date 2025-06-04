@@ -85,4 +85,6 @@ This document tracks current development tasks, their status, and associated req
 
 ## Blockers
 
-*   [e.g., Waiting for DMX test fixtures to arrive] 
+*   [e.g., Waiting for DMX test fixtures to arrive]
+
+- [x] Dynamic light count/config downlink: Device now supports runtime configuration of number of DMX lights via special downlink ([0xC0, N]), default 25, with full integration in codec and firmware. 
