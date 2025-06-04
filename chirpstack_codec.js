@@ -91,62 +91,83 @@ function encodeDownlink(input) {
     };
   }
   
-  // CASE 4: Pattern commands
+  // CASE 4: Pattern commands - COMPACT BINARY ENCODING
   if (input.data.pattern) {
-    // Create a proper pattern command object
-    var patternObj = {pattern: {}};
+    var bytes = [];
+    var patternType = '';
+    var speed = 50;
+    var cycles = 5;
     
     // Handle direct pattern names as shortcuts
     if (typeof input.data.pattern === 'string') {
-      patternObj.pattern.type = input.data.pattern;
+      patternType = input.data.pattern;
       
       // Apply default values for each pattern type
       switch (input.data.pattern) {
         case 'colorFade':
-          patternObj.pattern.speed = 50;
-          patternObj.pattern.cycles = 5;
+          speed = 50;
+          cycles = 5;
           break;
         case 'rainbow':
-          patternObj.pattern.speed = 50;
-          patternObj.pattern.cycles = 3;
+          speed = 50;
+          cycles = 3;
           break;
         case 'strobe':
-          patternObj.pattern.speed = 100;
-          patternObj.pattern.cycles = 10;
+          speed = 100;
+          cycles = 10;
           break;
         case 'chase':
-          patternObj.pattern.speed = 200;
-          patternObj.pattern.cycles = 3;
+          speed = 200;
+          cycles = 3;
           break;
         case 'alternate':
-          patternObj.pattern.speed = 300;
-          patternObj.pattern.cycles = 5;
+          speed = 300;
+          cycles = 5;
           break;
         case 'stop':
-          // Just stop the current pattern
-          patternObj.pattern.type = 'stop';
-          break;
+          // Special stop command
+          return {
+            bytes: [0xF0], // Special pattern stop command
+            fPort: input.fPort || 1
+          };
       }
     } 
     // Handle full pattern object with parameters
     else if (typeof input.data.pattern === 'object') {
-      patternObj.pattern = input.data.pattern;
-      
-      // Ensure the type is specified
-      if (!patternObj.pattern.type) {
-        return {
-          bytes: [],
-          fPort: input.fPort || 1
-        };
-      }
+      patternType = input.data.pattern.type || 'colorFade';
+      speed = input.data.pattern.speed || 50;
+      cycles = input.data.pattern.cycles || 5;
     }
     
-    // Convert to JSON string and then to bytes
-    var jsonString = JSON.stringify(patternObj);
-    var bytes = [];
-    for (var i = 0; i < jsonString.length; i++) {
-      bytes.push(jsonString.charCodeAt(i));
+    // Compact binary format for patterns:
+    // Byte 0: 0xF1 (pattern command marker)
+    // Byte 1: Pattern type (0=colorFade, 1=rainbow, 2=strobe, 3=chase, 4=alternate)
+    // Byte 2: Speed (lower byte)
+    // Byte 3: Speed (upper byte) 
+    // Byte 4: Cycles (lower byte)
+    // Byte 5: Cycles (upper byte)
+    
+    bytes.push(0xF1); // Pattern command marker
+    
+    // Map pattern type to number
+    var typeNum = 0;
+    switch (patternType) {
+      case 'colorFade': typeNum = 0; break;
+      case 'rainbow': typeNum = 1; break;
+      case 'strobe': typeNum = 2; break;
+      case 'chase': typeNum = 3; break;
+      case 'alternate': typeNum = 4; break;
+      default: typeNum = 0; break;
     }
+    bytes.push(typeNum);
+    
+    // Add speed as 16-bit value (little endian)
+    bytes.push(speed & 0xFF);        // Lower byte
+    bytes.push((speed >> 8) & 0xFF); // Upper byte
+    
+    // Add cycles as 16-bit value (little endian)
+    bytes.push(cycles & 0xFF);        // Lower byte
+    bytes.push((cycles >> 8) & 0xFF); // Upper byte
     
     return {
       bytes: bytes,

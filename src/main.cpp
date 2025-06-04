@@ -1400,6 +1400,218 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
   
   // NEW: Handle compact binary lights format from chirpstack_codec.js
   // Format: [numLights, address1, ch1, ch2, ch3, ch4, address2, ch1, ch2, ch3, ch4, ...]
+  if (size >= 6 && size <= 127 && data[0] != 0xF0 && data[0] != 0xF1) { // Reasonable size for lights data, exclude pattern markers
+    Serial.println("DEBUG: Size check passed for compact binary lights format");
+    Serial.print("DEBUG: Payload size = ");
+    Serial.println(size);
+    
+    uint8_t numLights = data[0];
+    Serial.print("DEBUG: First byte (numLights) = ");
+    Serial.println(numLights);
+    
+    // Check if the payload size matches the expected format
+    size_t expectedSize = 1 + (numLights * 5); // 1 byte for count + 5 bytes per light (address + 4 channels)
+    Serial.print("DEBUG: Expected size = 1 + (");
+    Serial.print(numLights);
+    Serial.print(" * 5) = ");
+    Serial.println(expectedSize);
+    
+    if (size == expectedSize && numLights > 0 && numLights <= 25) {
+      Serial.println("✅ COMPACT BINARY LIGHTS FORMAT DETECTED!");
+      Serial.print("Number of lights: ");
+      Serial.println(numLights);
+      
+      if (dmxInitialized && dmx != NULL) {
+        Serial.println("DEBUG: DMX is initialized, proceeding with compact binary processing");
+        
+        // Take mutex before modifying DMX data
+        if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
+          Serial.println("DEBUG: DMX mutex acquired successfully");
+          bool success = false;
+          
+          // Process each light in the compact format
+          for (int i = 0; i < numLights; i++) {
+            size_t offset = 1 + (i * 5); // Start after count byte, 5 bytes per light
+            
+            uint8_t address = data[offset];
+            uint8_t ch1 = data[offset + 1];
+            uint8_t ch2 = data[offset + 2]; 
+            uint8_t ch3 = data[offset + 3];
+            uint8_t ch4 = data[offset + 4];
+            
+            Serial.print("🔥 Processing Light ");
+            Serial.print(i + 1);
+            Serial.print(": Address=");
+            Serial.print(address);
+            Serial.print(", Channels=[");
+            Serial.print(ch1);
+            Serial.print(",");
+            Serial.print(ch2);
+            Serial.print(",");
+            Serial.print(ch3);
+            Serial.print(",");
+            Serial.print(ch4);
+            Serial.println("]");
+            
+            // Validate address (1-512 for DMX)
+            if (address >= 1 && address <= 512) {
+              // Set DMX channels directly (DMX uses 1-based addressing)
+              if (address + 3 < DMX_PACKET_SIZE) {
+                dmx->getDmxData()[address] = ch1;
+                dmx->getDmxData()[address + 1] = ch2;
+                dmx->getDmxData()[address + 2] = ch3;
+                dmx->getDmxData()[address + 3] = ch4;
+                success = true;
+                
+                Serial.print("Set DMX channels ");
+                Serial.print(address);
+                Serial.print("-");
+                Serial.print(address + 3);
+                Serial.print(" to values: [");
+                Serial.print(ch1);
+                Serial.print(",");
+                Serial.print(ch2);
+                Serial.print(",");
+                Serial.print(ch3);
+                Serial.print(",");
+                Serial.print(ch4);
+                Serial.println("]");
+              } else {
+                Serial.print("DMX address out of range: ");
+                Serial.println(address);
+              }
+            } else {
+              Serial.print("Invalid DMX address: ");
+              Serial.println(address);
+            }
+          }
+          
+          if (success) {
+            Serial.println("Sending compact binary lights command to DMX...");
+            dmx->sendData();
+            dmx->saveSettings();
+            Serial.println("Compact binary lights command processed successfully!");
+            
+            // Blink LED to indicate successful processing
+            DmxController::blinkLED(LED_PIN, 3, 200);
+          } else {
+            Serial.println("Failed to process any lights from compact binary format");
+          }
+          
+          // Release the mutex
+          xSemaphoreGive(dmxMutex);
+          
+          if (success) {
+            return; // Exit early - we've processed the command successfully
+          }
+        } else {
+          Serial.println("Failed to take DMX mutex for compact binary processing");
+        }
+      } else {
+        Serial.println("DMX not initialized, cannot process compact binary lights command");
+      }
+    }
+  }
+  
+  // NEW: Handle compact binary pattern commands from chirpstack_codec.js  
+  // Pattern format: [0xF1, type, speed_low, speed_high, cycles_low, cycles_high] = 6 bytes
+  // Pattern stop: [0xF0] = 1 byte
+  if (size == 1 && data[0] == 0xF0) {
+    Serial.println("🎵 COMPACT BINARY PATTERN STOP COMMAND DETECTED!");
+    
+    // Stop any running pattern
+    if (patternHandler.isActive()) {
+      patternHandler.stop();
+      Serial.println("✅ Pattern stopped successfully");
+    } else {
+      Serial.println("ℹ️ No pattern was running");
+    }
+    
+    // Blink LED to indicate successful processing
+    DmxController::blinkLED(LED_PIN, 2, 200);
+    return; // Exit early - command processed
+  }
+  
+  if (size == 6 && data[0] == 0xF1) {
+    Serial.println("🎵 COMPACT BINARY PATTERN COMMAND DETECTED!");
+    
+    uint8_t patternType = data[1];
+    uint16_t speed = data[2] | (data[3] << 8);  // Little endian 16-bit
+    uint16_t cycles = data[4] | (data[5] << 8); // Little endian 16-bit
+    
+    Serial.print("Pattern Type: ");
+    Serial.print(patternType);
+    Serial.print(" (");
+    
+    DmxPattern::PatternType enumType;
+    String typeName;
+    
+    switch (patternType) {
+      case 0:
+        enumType = DmxPattern::COLOR_FADE;
+        typeName = "COLOR_FADE";
+        break;
+      case 1:
+        enumType = DmxPattern::RAINBOW;
+        typeName = "RAINBOW";
+        break;
+      case 2:
+        enumType = DmxPattern::STROBE;
+        typeName = "STROBE";
+        break;
+      case 3:
+        enumType = DmxPattern::CHASE;
+        typeName = "CHASE";
+        break;
+      case 4:
+        enumType = DmxPattern::ALTERNATE;
+        typeName = "ALTERNATE";
+        break;
+      default:
+        enumType = DmxPattern::COLOR_FADE;
+        typeName = "COLOR_FADE (default)";
+        break;
+    }
+    
+    Serial.print(typeName);
+    Serial.print("), Speed: ");
+    Serial.print(speed);
+    Serial.print("ms, Cycles: ");
+    Serial.println(cycles);
+    
+    // Initialize fixtures if needed
+    if (dmxInitialized && dmx != NULL) {
+      if (dmx->getNumFixtures() == 0) {
+        Serial.println("DEBUG: No fixtures configured! Setting up default test fixtures for pattern...");
+        dmx->initializeFixtures(4, 4);
+        dmx->setFixtureConfig(0, "Fixture 1", 1, 1, 2, 3, 4);
+        dmx->setFixtureConfig(1, "Fixture 2", 5, 5, 6, 7, 8);
+        dmx->setFixtureConfig(2, "Fixture 3", 9, 9, 10, 11, 12);
+        dmx->setFixtureConfig(3, "Fixture 4", 13, 13, 14, 15, 16);
+        Serial.print("DEBUG: Now have ");
+        Serial.print(dmx->getNumFixtures());
+        Serial.println(" fixtures configured for patterns");
+      }
+      
+      // Start the pattern
+      patternHandler.start(enumType, speed, cycles);
+      Serial.print("🎨 Pattern started: ");
+      Serial.print(typeName);
+      Serial.print(" at ");
+      Serial.print(speed);
+      Serial.print("ms speed for ");
+      Serial.print(cycles);
+      Serial.println(" cycles");
+      
+      // Blink LED to indicate successful processing
+      DmxController::blinkLED(LED_PIN, 3, 200);
+      return; // Exit early - command processed
+    } else {
+      Serial.println("❌ DMX not initialized, cannot start pattern");
+    }
+  }
+  
+  // NEW: Handle compact binary lights format from chirpstack_codec.js
   if (size >= 6 && size <= 127) { // Reasonable size for lights data (1-25 lights max)
     Serial.println("DEBUG: Size check passed for compact binary format");
     Serial.print("DEBUG: Payload size = ");
