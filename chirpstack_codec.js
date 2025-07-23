@@ -175,52 +175,52 @@ function encodeDownlink(input) {
     };
   }
   
-  // CASE 5: Lights JSON object - proper DMX control
-  if (input.data.lights) {
-    // START MODIFICATION FOR COMPACT BYTE ENCODING
-
-    if (!Array.isArray(input.data.lights)) {
-      // Handle error: 'lights' is not an array
-      // You might want to log this or return an error object depending on your error handling strategy
-      return {
-        bytes: [],
-        fPort: input.fPort || 1
-      };
-    }
-
-    let bytes = [];
-    bytes.push(input.data.lights.length); // First byte: number of lights
-
-    for (let i = 0; i < input.data.lights.length; i++) {
-      const light = input.data.lights[i];
-
-      // Basic validation for light structure
-      if (typeof light.address !== 'number' || !Array.isArray(light.channels) || light.channels.length !== 4) {
-        // Handle error: invalid light structure
-        console.error("Invalid light structure encountered:", light); // Log the error
+    // CASE 5: Lights JSON object - proper DMX control
+    if (input.data.lights) {
+      // START MODIFICATION FOR COMPACT BYTE ENCODING
+  
+      if (!Array.isArray(input.data.lights)) {
+        // Handle error: 'lights' is not an array
+        // You might want to log this or return an error object depending on your error handling strategy
         return {
-          bytes: [], // Return empty bytes or throw an error to prevent malformed payload
+          bytes: [],
           fPort: input.fPort || 1
         };
       }
-
-      // Add address byte
-      // Ensure address is within a byte range (0-255)
-      bytes.push(light.address & 0xFF);
-
-      // Add 4 channel bytes
-      for (let j = 0; j < 4; j++) {
-        // Ensure channel value is within a byte range (0-255)
-        bytes.push(light.channels[j] & 0xFF);
+  
+      let bytes = [];
+      bytes.push(input.data.lights.length); // First byte: number of lights
+  
+      for (let i = 0; i < input.data.lights.length; i++) {
+        const light = input.data.lights[i];
+  
+        // Basic validation for light structure
+        if (typeof light.address !== 'number' || !Array.isArray(light.channels) || light.channels.length !== 4) {
+          // Handle error: invalid light structure
+          console.error("Invalid light structure encountered:", light); // Log the error
+          return {
+            bytes: [], // Return empty bytes or throw an error to prevent malformed payload
+            fPort: input.fPort || 1
+          };
+        }
+  
+        // Add address byte
+        // Ensure address is within a byte range (0-255)
+        bytes.push(light.address & 0xFF);
+  
+        // Add 4 channel bytes
+        for (let j = 0; j < 4; j++) {
+          // Ensure channel value is within a byte range (0-255)
+          bytes.push(light.channels[j] & 0xFF);
+        }
       }
+  
+      return {
+        bytes: bytes,
+        fPort: input.fPort || 1
+      };
+      // END MODIFICATION FOR COMPACT BYTE ENCODING
     }
-
-    return {
-      bytes: bytes,
-      fPort: input.fPort || 1
-    };
-    // END MODIFICATION FOR COMPACT BYTE ENCODING
-  }
 
   // CASE 6: Config downlink for number of lights
   if (input.data.config && typeof input.data.config.numLights === 'number') {
@@ -232,26 +232,26 @@ function encodeDownlink(input) {
       fPort: input.fPort || 1
     };
   }
-
-  // Fallback - any other data is converted to a string and sent
-  if (typeof input.data === 'object') {
-    var jsonString = JSON.stringify(input.data);
-    var bytes = [];
-    for (var i = 0; i < jsonString.length; i++) {
-      bytes.push(jsonString.charCodeAt(i));
+  
+    // Fallback - any other data is converted to a string and sent
+    if (typeof input.data === 'object') {
+      var jsonString = JSON.stringify(input.data);
+      var bytes = [];
+      for (var i = 0; i < jsonString.length; i++) {
+        bytes.push(jsonString.charCodeAt(i));
+      }
+      return {
+        bytes: bytes,
+        fPort: input.fPort || 1
+      };
     }
+  
+    // Return empty if nothing matched
     return {
-      bytes: bytes,
+      bytes: [],
       fPort: input.fPort || 1
     };
   }
-
-  // Return empty if nothing matched
-  return {
-    bytes: [],
-    fPort: input.fPort || 1
-  };
-}
 
 /**
  * Uplink decoder function (device to application)

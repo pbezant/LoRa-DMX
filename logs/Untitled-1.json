@@ -1,0 +1,53 @@
+{
+    "name": "as.down.data.decode.warning",
+    "time": "2025-07-22T19:33:11.180676736Z",
+    "identifiers": [
+      {
+        "device_ids": {
+          "device_id": "dmx-d4cc",
+          "application_ids": {
+            "application_id": "fms-demo-smart-office"
+          },
+          "dev_eui": "90CFF868EF8BD4CC",
+          "join_eui": "ED733220D2A9F133"
+        }
+      }
+    ],
+    "data": {
+      "@type": "type.googleapis.com/ttn.lorawan.v3.ApplicationDownlink",
+      "session_key_id": "AZgzlgMF7e7Kz43HY3rmfw==",
+      "f_port": 1,
+      "f_cnt": 7,
+      "frm_payload": "8QAeAAoA",
+      "decoded_payload": {
+        "raw": "f1001e000a00",
+        "text": "ñ"
+      },
+      "decoded_payload_warnings": [
+        "Failed to validate as JSON: SyntaxError: invalid character 'Ã' looking for beginning of value"
+      ],
+      "correlation_ids": [
+        "as:downlink:01K0ST0A38T7D9TP0D9SBEPF1K",
+        "gs:tx_ack:01K0ST0AC83H88ASDXY4QB7QVW",
+        "ns:transmission:01K0ST0A9Y5FNESNHQACV658Q5",
+        "rpc:/ttn.lorawan.v3.AppAs/DownlinkQueueReplace:f7ceb299-c488-46e2-8c18-34051ebe7487"
+      ]
+    },
+    "correlation_ids": [
+      "as:downlink:01K0ST0A38T7D9TP0D9SBEPF1K",
+      "as:up:01K0ST0ACAVARD34FZDYCRFTYW",
+      "gs:tx_ack:01K0ST0AC83H88ASDXY4QB7QVW",
+      "ns:transmission:01K0ST0A9Y5FNESNHQACV658Q5",
+      "rpc:/ttn.lorawan.v3.AppAs/DownlinkQueueReplace:f7ceb299-c488-46e2-8c18-34051ebe7487"
+    ],
+    "origin": "ip-10-22-13-169.us-west-1.compute.internal",
+    "context": {
+      "tenant-id": "CgtmbXNpb3RjbG91ZA=="
+    },
+    "visibility": {
+      "rights": [
+        "RIGHT_APPLICATION_TRAFFIC_READ"
+      ]
+    },
+    "unique_id": "01K0ST0ACCDJFHPGRS8J6Y459V"
+  }

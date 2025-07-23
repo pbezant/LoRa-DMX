@@ -87,6 +87,6 @@ After migration, discovered that downlinks were only received after uplinks (Cla
 *   Better error handling and event callbacks
 *   Reduced complexity in main application code
 *   **Full backward compatibility with README commands** - All documented commands now work correctly
-*   **True Class C operation** - Downlinks received immediately, not just after uplinks
+*   **True Class C operation** - Downlinks received immediately, not just after uplinks 
 
 - The number of DMX lights is now dynamic (default 25), configurable at runtime via a config downlink ([0xC0, N]). 

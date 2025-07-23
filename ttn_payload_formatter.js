@@ -64,109 +64,203 @@ function sanitizeString(str) {
 
 // Downlink encoder function (application to device)
 function encodeDownlink(input) {
-  // CASE 1: Special command strings
-  if (input.data.command === "go") {
+  // NEW: Direct hex string support
+  if (input.data.hex && typeof input.data.hex === 'string') {
+    // Convert hex string to bytes
+    var hexStr = input.data.hex.replace(/[^0-9A-Fa-f]/g, ''); // Remove any non-hex characters
+    var bytes = [];
+    
+    // Ensure even number of characters
+    if (hexStr.length % 2 !== 0) {
+      hexStr = '0' + hexStr; // Pad with leading zero if odd length
+    }
+    
+    // Convert hex pairs to bytes
+    for (var i = 0; i < hexStr.length; i += 2) {
+      bytes.push(parseInt(hexStr.substr(i, 2), 16));
+    }
+    
     return {
-      bytes: [0x67, 0x6F], // ASCII "go"
+      bytes: bytes,
       fPort: input.fPort || 1
     };
   }
   
-  // CASE 2: Special numeric commands
-  if (input.data.command === "green" || input.data.command === 2) {
+  // NEW: Raw byte array support
+  if (input.data.raw && Array.isArray(input.data.raw)) {
+    var bytes = [];
+    for (var i = 0; i < input.data.raw.length; i++) {
+      var val = input.data.raw[i];
+      if (typeof val === 'number' && val >= 0 && val <= 255) {
+        bytes.push(Math.floor(val));
+      }
+    }
     return {
-      bytes: [0x02], // Command code for green
+      bytes: bytes,
       fPort: input.fPort || 1
     };
+  }
+
+  // CASE 1: Config downlink for number of lights
+  if (input.data.config && typeof input.data.config.numLights === 'number') {
+    var n = input.data.config.numLights;
+    if (n < 1) n = 1;
+    if (n > 25) n = 25;
+    return {
+      bytes: [0xC0, n],
+      fPort: input.fPort || 1
+    };
+  }
+
+  // CASE 2: Simple command strings - COMPACT BINARY
+  if (input.data.command === "off" || input.data.command === 0) {
+    return { bytes: [0x00], fPort: input.fPort || 1 };
   }
   if (input.data.command === "red" || input.data.command === 1) {
-    return {
-      bytes: [0x01], // Command code for red
-      fPort: input.fPort || 1
-    };
+    return { bytes: [0x01], fPort: input.fPort || 1 };
+  }
+  if (input.data.command === "green" || input.data.command === 2) {
+    return { bytes: [0x02], fPort: input.fPort || 1 };
   }
   if (input.data.command === "blue" || input.data.command === 3) {
-    return {
-      bytes: [0x03], // Command code for blue
-      fPort: input.fPort || 1
-    };
+    return { bytes: [0x03], fPort: input.fPort || 1 };
   }
   if (input.data.command === "white" || input.data.command === 4) {
-    return {
-      bytes: [0x04], // Command code for white
-      fPort: input.fPort || 1
-    };
+    return { bytes: [0x04], fPort: input.fPort || 1 };
   }
-  if (input.data.command === "off" || input.data.command === 0) {
-    return {
-      bytes: [0x00], // Command code for off
-      fPort: input.fPort || 1
-    };
-  }
-  
-  // CASE 3: Direct test mode
   if (input.data.command === "test") {
-    return {
-      bytes: [0xAA], // Special test trigger
-      fPort: input.fPort || 1
-    };
+    return { bytes: [0xAA], fPort: input.fPort || 1 };
   }
-  
-  // CASE 4: Pattern commands
+  if (input.data.command === "go") {
+    return { bytes: [0x67, 0x6F], fPort: input.fPort || 1 }; // ASCII "go"
+  }
+
+  // CASE 3: Pattern commands - COMPACT BINARY ENCODING
   if (input.data.pattern) {
-    // Create a proper pattern command object
-    var patternObj = {pattern: {}};
+    var bytes = [];
+    var patternType = '';
+    var speed = 50;
+    var cycles = 5;
     
     // Handle direct pattern names as shortcuts
     if (typeof input.data.pattern === 'string') {
-      patternObj.pattern.type = input.data.pattern;
+      patternType = input.data.pattern;
       
       // Apply default values for each pattern type
       switch (input.data.pattern) {
         case 'colorFade':
-          patternObj.pattern.speed = 50;
-          patternObj.pattern.cycles = 5;
+          speed = 50;
+          cycles = 5;
           break;
         case 'rainbow':
-          patternObj.pattern.speed = 50;
-          patternObj.pattern.cycles = 3;
+          speed = 50;
+          cycles = 3;
           break;
         case 'strobe':
-          patternObj.pattern.speed = 100;
-          patternObj.pattern.cycles = 10;
+          speed = 100;
+          cycles = 10;
           break;
         case 'chase':
-          patternObj.pattern.speed = 200;
-          patternObj.pattern.cycles = 3;
+          speed = 200;
+          cycles = 3;
           break;
         case 'alternate':
-          patternObj.pattern.speed = 300;
-          patternObj.pattern.cycles = 5;
+          speed = 300;
+          cycles = 5;
           break;
         case 'stop':
-          // Just stop the current pattern
-          patternObj.pattern.type = 'stop';
-          break;
+          return { bytes: [0xF0], fPort: input.fPort || 1 }; // Pattern stop command
       }
     } 
     // Handle full pattern object with parameters
     else if (typeof input.data.pattern === 'object') {
-      patternObj.pattern = input.data.pattern;
+      patternType = input.data.pattern.type || 'colorFade';
+      speed = input.data.pattern.speed || 50;
+      cycles = input.data.pattern.cycles || 5;
       
-      // Ensure the type is specified
-      if (!patternObj.pattern.type) {
-        return {
-          bytes: [],
-          fPort: input.fPort || 1
-        };
+      if (patternType === 'stop') {
+        return { bytes: [0xF0], fPort: input.fPort || 1 }; // Pattern stop command
       }
     }
     
-    // Convert to JSON string and then to bytes
-    var jsonString = JSON.stringify(patternObj);
+    // Map pattern types to enum values
+    var patternEnum = 0; // Default to colorFade
+    switch (patternType) {
+      case 'colorFade': patternEnum = 0; break;
+      case 'rainbow': patternEnum = 1; break;
+      case 'strobe': patternEnum = 2; break;
+      case 'chase': patternEnum = 3; break;
+      case 'alternate': patternEnum = 4; break;
+      default: patternEnum = 0; break;
+    }
+    
+    // Ensure speed and cycles are within valid ranges
+    if (speed < 1) speed = 1;
+    if (speed > 65535) speed = 65535;
+    if (cycles < 1) cycles = 1;
+    if (cycles > 65535) cycles = 65535;
+    
+    // Encode as: [0xF1, patternEnum, speed_low, speed_high, cycles_low, cycles_high]
+    bytes = [
+      0xF1,                    // Pattern command marker
+      patternEnum,             // Pattern type (0-4)
+      speed & 0xFF,            // Speed low byte
+      (speed >> 8) & 0xFF,     // Speed high byte
+      cycles & 0xFF,           // Cycles low byte
+      (cycles >> 8) & 0xFF     // Cycles high byte
+    ];
+    
+    return {
+      bytes: bytes,
+      fPort: input.fPort || 1
+    };
+  }
+
+  // CASE 4: Lights array - COMPACT BINARY ENCODING
+  if (input.data.lights && Array.isArray(input.data.lights)) {
     var bytes = [];
-    for (var i = 0; i < jsonString.length; i++) {
-      bytes.push(jsonString.charCodeAt(i));
+    var validLights = [];
+    
+    // Filter and validate lights
+    for (var i = 0; i < input.data.lights.length; i++) {
+      var light = input.data.lights[i];
+      if (light && typeof light.address === 'number' && Array.isArray(light.channels) && light.channels.length === 4) {
+        // Validate address (1-512) and channels (0-255)
+        if (light.address >= 1 && light.address <= 512) {
+          var validChannels = true;
+          for (var j = 0; j < 4; j++) {
+            if (typeof light.channels[j] !== 'number' || light.channels[j] < 0 || light.channels[j] > 255) {
+              validChannels = false;
+              break;
+            }
+          }
+          if (validChannels) {
+            validLights.push(light);
+          }
+        }
+      }
+    }
+    
+    if (validLights.length === 0) {
+      return { bytes: [], fPort: input.fPort || 1 };
+    }
+    
+    // Check payload size limit (assume max ~50 bytes for LoRaWAN)
+    var maxLights = Math.floor((50 - 1) / 5); // 1 byte for count + 5 bytes per light
+    if (validLights.length > maxLights) {
+      validLights = validLights.slice(0, maxLights);
+    }
+    
+    // Encode as compact binary: [numLights, address1, ch1, ch2, ch3, ch4, ...]
+    bytes.push(validLights.length);
+    
+    for (var i = 0; i < validLights.length; i++) {
+      var light = validLights[i];
+      bytes.push(light.address);
+      bytes.push(Math.floor(light.channels[0]));
+      bytes.push(Math.floor(light.channels[1]));
+      bytes.push(Math.floor(light.channels[2]));
+      bytes.push(Math.floor(light.channels[3]));
     }
     
     return {
@@ -175,24 +269,7 @@ function encodeDownlink(input) {
     };
   }
   
-  // CASE 5: Lights JSON object - proper DMX control
-  if (input.data.lights) {
-    // Convert the JSON object to a string
-    var jsonString = JSON.stringify({lights: input.data.lights});
-    
-    // Convert the string to bytes
-    var bytes = [];
-    for (var i = 0; i < jsonString.length; i++) {
-      bytes.push(jsonString.charCodeAt(i));
-    }
-    
-    return {
-      bytes: bytes,
-      fPort: input.fPort || 1
-    };
-  }
-  
-  // Fallback - any other data is converted to a string and sent
+  // Fallback - any other data is converted to a string and sent as JSON
   if (typeof input.data === 'object') {
     var jsonString = JSON.stringify(input.data);
     var bytes = [];

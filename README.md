@@ -173,7 +173,7 @@ This project now includes a dedicated ChirpStack-compatible payload codec: `chir
   {
     "lights": [
       { "address": 1, "channels": [255, 0, 0, 0] },
-      { "address": 2, "channels": [0, 255, 0, 0] }
+      { "address": 5, "channels": [0, 255, 0, 0] }
     ]
   }
   ```
@@ -189,7 +189,7 @@ This project now includes a dedicated ChirpStack-compatible payload codec: `chir
       "dmxStatus": { "numberOfLights": 2 },
       "lights": [
         { "address": 1, "channels": [255, 0, 0, 0] },
-        { "address": 2, "channels": [0, 255, 0, 0] }
+        { "address": 5, "channels": [0, 255, 0, 0] }
       ]
     }
   }

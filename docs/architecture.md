@@ -53,7 +53,7 @@ This project implements an embedded DMX lighting controller. The system's core i
 *   **Use of Existing Libraries:** Leveraging well-tested libraries like `RadioLib`, `ArduinoJson`, and `esp_dmx` accelerates development and ensures robust handling of complex protocols.
 *   **Custom Wrappers (`LoRaManager`, `DmxController`):** These likely simplify the main application code by providing a higher-level, project-specific API over the more generic libraries. This improves readability and maintainability.
 *   **Reliance on TTN for Network Infrastructure:** Offloads the complexity of managing a LoRaWAN network server to a public/community service (or private TTN instance).
-*   **JSON as Flexible Command Language:** Allows for complex and extensible commands without needing to redefine a binary protocol for every new feature.
+*   **JSON as Flexible Command Language:** Allows for complex and extensible commands without needing to redefine a binary protocol for every new feature. 
 
 ## Dynamic Light Count Configuration (Config Downlink)
 

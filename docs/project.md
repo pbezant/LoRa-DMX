@@ -31,7 +31,7 @@ This document outlines the core architectural decisions, the primary technologie
 
 ## Database Schema Overview
 
-*   **N/A:** This project is an embedded system and does not directly involve a traditional database. Configuration (like DMX fixture addresses) is managed by the incoming JSON commands. LoRaWAN credentials (joinEUI, devEUI, appKey) are hardcoded or configured at deployment.
+*   **N/A:** This project is an embedded system and does not directly involve a traditional database. Configuration (like DMX fixture addresses) is managed by the incoming JSON commands. LoRaWAN credentials (joinEUI, devEUI, appKey) are hardcoded or configured at deployment. 
 
 ### Configurable Number of DMX Lights
 
