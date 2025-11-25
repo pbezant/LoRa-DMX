@@ -147,6 +147,7 @@ The included payload formatter (`ttn_payload_formatter.js`) supports multiple co
 1. **JSON commands** - Complex control of multiple fixtures
 2. **Simple color commands** - Quick color changes for all fixtures
 3. **Special test commands** - For debugging and testing
+4. **Compact binary encoding** - Automatically generated for lights/pattern/config commands to keep packets under LoRaWAN limits. The formatter's **downlink decoder now reverses these compact payloads back into human-friendly JSON so the TTN console shows exactly what will run on the device.**
 
 Add the following JavaScript code to your TTN application's payload formatters section:
 

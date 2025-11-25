@@ -127,6 +127,9 @@ bool keepDmxDuringRx = true;
 // Add global variable for number of lights
 uint8_t numLights = 25; // Default to max (25)
 
+// Flag to defer settings save to main loop
+volatile bool settingsChanged = false;
+
 // Forward declarations
 void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr);
 bool processLightsJson(JsonArray lightsArray);
@@ -715,7 +718,8 @@ bool processJsonPayload(const String& jsonString) {
       
       // Send the DMX data and save settings
       dmx->sendData();
-      dmx->saveSettings();
+      // dmx->saveSettings(); // MOVED TO LOOP
+      settingsChanged = true;
       Serial.println("Simple command processed successfully");
       return true;
     }
@@ -850,7 +854,8 @@ bool processJsonPayload(const String& jsonString) {
       dmx->runRainbowChase(cycles, speed, staggered);
       
       // Save the final state after the pattern completes
-      dmx->saveSettings();
+      // dmx->saveSettings(); // MOVED TO LOOP
+      settingsChanged = true;
       
       return true;
     } 
@@ -897,7 +902,8 @@ bool processJsonPayload(const String& jsonString) {
       dmx->runStrobeTest(color, count, onTime, offTime, alternate);
       
       // Save the final state after the pattern completes
-      dmx->saveSettings();
+      // dmx->saveSettings(); // MOVED TO LOOP
+      settingsChanged = true;
       
       return true;
     }
@@ -945,7 +951,8 @@ bool processJsonPayload(const String& jsonString) {
         Serial.println("Continuous rainbow mode disabled");
         
         // Save the final state when the continuous mode is disabled
-        dmx->saveSettings();
+        // dmx->saveSettings(); // MOVED TO LOOP
+        settingsChanged = true;
       }
       
       return true;
@@ -1112,7 +1119,8 @@ bool processLightsJson(JsonArray lightsArray) {
     dmx->sendData();
     
     // Save settings to persistent storage
-    dmx->saveSettings();
+    // dmx->saveSettings(); // MOVED TO LOOP
+    settingsChanged = true;
     Serial.println("DMX settings saved to persistent storage");
   }
   
@@ -1308,11 +1316,12 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
         
         // Send the DMX data and save settings
         dmx->sendData();
-        dmx->saveSettings();
+        // dmx->saveSettings(); // MOVED TO LOOP
+        settingsChanged = true;
         Serial.println("Binary command processed successfully");
         
         // Blink LED to indicate successful processing
-        DmxController::blinkLED(LED_PIN, 2, 200);
+        // DmxController::blinkLED(LED_PIN, 2, 200); // MOVED TO LOOP
         return;  // Exit early - we've processed the command
       }
     }
@@ -1362,11 +1371,12 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
         
         // Send the DMX data and save settings
         dmx->sendData();
-        dmx->saveSettings();
+        // dmx->saveSettings(); // MOVED TO LOOP
+        settingsChanged = true;
         Serial.println("ASCII digit command processed successfully");
         
         // Blink LED to indicate successful processing
-        DmxController::blinkLED(LED_PIN, 2, 200);
+        // DmxController::blinkLED(LED_PIN, 2, 200); // MOVED TO LOOP
         return;  // Exit early - we've processed the command
       }
     }
@@ -1384,7 +1394,8 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
         dmx->setFixtureColor(i, 0, 255, 0, 0);
       }
       dmx->sendData();
-      dmx->saveSettings();
+      // dmx->saveSettings(); // MOVED TO LOOP
+      settingsChanged = true;
       Serial.println("All fixtures set to GREEN");
       Serial.println("TEST COMPLETED");
       
@@ -1396,7 +1407,7 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
       Serial.println("=================================================");
       
       // Blink LED to indicate successful processing
-      DmxController::blinkLED(LED_PIN, 5, 200);
+      // DmxController::blinkLED(LED_PIN, 5, 200); // MOVED TO LOOP
       return;
     }
   }
@@ -1492,11 +1503,12 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
           if (success) {
             Serial.println("Sending compact binary lights command to DMX...");
             dmx->sendData();
-            dmx->saveSettings();
+            // dmx->saveSettings(); // MOVED TO LOOP
+            settingsChanged = true;
             Serial.println("Compact binary lights command processed successfully!");
             
             // Blink LED to indicate successful processing
-            DmxController::blinkLED(LED_PIN, 3, 200);
+            // DmxController::blinkLED(LED_PIN, 3, 200); // MOVED TO LOOP
           } else {
             Serial.println("Failed to process any lights from compact binary format");
           }
@@ -1531,7 +1543,7 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
     }
     
     // Blink LED to indicate successful processing
-    DmxController::blinkLED(LED_PIN, 2, 200);
+    // DmxController::blinkLED(LED_PIN, 2, 200); // MOVED TO LOOP
     return; // Exit early - command processed
   }
   
@@ -1607,7 +1619,7 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
       Serial.println(" cycles");
       
       // Blink LED to indicate successful processing
-      DmxController::blinkLED(LED_PIN, 3, 200);
+      // DmxController::blinkLED(LED_PIN, 3, 200); // MOVED TO LOOP
       return; // Exit early - command processed
     } else {
       Serial.println("❌ DMX not initialized, cannot start pattern");
@@ -1704,11 +1716,12 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
           if (success) {
             Serial.println("Sending compact binary lights command to DMX...");
             dmx->sendData();
-            dmx->saveSettings();
+            // dmx->saveSettings(); // MOVED TO LOOP
+            settingsChanged = true;
             Serial.println("Compact binary lights command processed successfully!");
             
             // Blink LED to indicate successful processing
-            DmxController::blinkLED(LED_PIN, 3, 200);
+            // DmxController::blinkLED(LED_PIN, 3, 200); // MOVED TO LOOP
           } else {
             Serial.println("Failed to process any lights from compact binary format");
           }
@@ -1824,7 +1837,7 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
         bool success = processJsonPayload(exampleJson);
         if (success) {
           Serial.println("GO command processed successfully - all fixtures set to GREEN");
-          DmxController::blinkLED(LED_PIN, 3, 200);
+          // DmxController::blinkLED(LED_PIN, 3, 200); // MOVED TO LOOP
           return;
         } else {
           Serial.println("Failed to process GO command JSON");
@@ -1845,7 +1858,8 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
             dmx->setFixtureColor(i, 0, 255, 0, 0);
           }
           dmx->sendData();
-          dmx->saveSettings();
+          // dmx->saveSettings(); // MOVED TO LOOP
+          settingsChanged = true;
           Serial.println("All fixtures set to GREEN");
           return; // Command was processed
         }
@@ -1911,11 +1925,12 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
               if (success) {
                 // Send the data to the fixtures and save the settings
                 dmx->sendData();
-                dmx->saveSettings();
+                // dmx->saveSettings(); // MOVED TO LOOP
+                settingsChanged = true;
                 Serial.println("DIRECT PROCESSING: DMX data sent and saved");
                 
                 // Blink LED to indicate success
-                DmxController::blinkLED(LED_PIN, 2, 200);
+                // DmxController::blinkLED(LED_PIN, 2, 200); // MOVED TO LOOP
                 
                 // Exit early - we've handled it directly
                 return;
@@ -2060,7 +2075,7 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
           if (success) {
             Serial.println("Successfully processed downlink");
             // Blink LED to indicate successful processing
-            DmxController::blinkLED(LED_PIN, 2, 200);
+            // DmxController::blinkLED(LED_PIN, 2, 200); // MOVED TO LOOP
             
             // Send a confirmation uplink if this is a ping
             if (payloadStr.indexOf("\"ping\"") > 0) {
@@ -2076,7 +2091,7 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
           } else {
             Serial.println("Failed to process downlink");
             // Blink LED rapidly to indicate error
-            DmxController::blinkLED(LED_PIN, 5, 100);
+            // DmxController::blinkLED(LED_PIN, 5, 100); // MOVED TO LOOP
           }
         } catch (const std::exception& e) {
           Serial.print("EXCEPTION in command processing: ");
@@ -2119,11 +2134,12 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
         int addr = 1 + i * 4;
         dmx->setFixtureConfig(i, "Fixture", addr, addr, addr+1, addr+2, addr+3);
       }
-      dmx->saveSettings();
+      // dmx->saveSettings(); // MOVED TO LOOP
+      settingsChanged = true;
       Serial.println("[CONFIG] Fixtures re-initialized for new light count");
     }
     // Blink LED to indicate config change
-    DmxController::blinkLED(LED_PIN, 4, 100);
+    // DmxController::blinkLED(LED_PIN, 4, 100); // MOVED TO LOOP
     return;
   }
 }
@@ -2256,7 +2272,7 @@ void initializeLoRaWAN() {
     Serial.println("[LoRaWAN] Ping command received - Class C response confirmed!");
     
     // Blink LED to show ping received
-    DmxController::blinkLED(LED_PIN, 3, 200);
+    // DmxController::blinkLED(LED_PIN, 3, 200); // MOVED TO LOOP
     
     // Send ping response
     if (loraInitialized && lora.isJoined()) {
@@ -2298,9 +2314,10 @@ void initializeLoRaWAN() {
         dmx->setFixtureColor(i, 0, 255, 0, 0);
       }
       dmx->sendData();
-      dmx->saveSettings();
+      // dmx->saveSettings(); // MOVED TO LOOP
+      settingsChanged = true;
       
-      DmxController::blinkLED(LED_PIN, 2, 200);
+      // DmxController::blinkLED(LED_PIN, 2, 200); // MOVED TO LOOP
       Serial.println("[LoRaWAN] Test command completed - all fixtures set to green");
     }
   });
@@ -2403,6 +2420,14 @@ void loop() {
         xSemaphoreGive(dmxMutex);
       }
     }
+  }
+
+  // Handle deferred settings save (prevents crash in ISR)
+  if (settingsChanged && dmxInitialized && dmx != NULL) {
+    Serial.println("[App] Saving settings to flash (deferred from callback)...");
+    dmx->saveSettings();
+    settingsChanged = false;
+    DmxController::blinkLED(LED_PIN, 2, 200); // Visual confirmation
   }
   
   // Update pattern (if active)

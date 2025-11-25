@@ -3,29 +3,96 @@
 
 // Uplink decoder function (device to application)
 function decodeUplink(input) {
-  // Try to parse as JSON first
-  try {
-    // Convert bytes to string
-    var str = String.fromCharCode.apply(null, input.bytes);
-    var data = JSON.parse(str);
-    
-    // Return the parsed JSON and add metadata
-    return {
-      data: data,
-      warnings: [],
-      errors: []
-    };
-  } catch (error) {
-    // If it's not valid JSON, return raw data
-    return {
-      data: {
-        raw: bytesToHex(input.bytes),
-        text: String.fromCharCode.apply(null, input.bytes)
-      },
-      warnings: ["Failed to parse as JSON: " + error.message],
-      errors: []
-    };
+  var bytes = input.bytes || [];
+  var result = {
+    data: {},
+    warnings: [],
+    errors: []
+  };
+
+  if (bytes.length === 0) {
+    result.errors.push("Empty payload received");
+    return result;
   }
+
+  // Heartbeat/status payload from firmware (4-byte counter, status byte, fixture count)
+  if (bytes.length === 6 && (bytes[4] & 0xC0) === 0xC0) {
+    var counter = readUint32BE(bytes, 0);
+    var statusByte = bytes[4];
+    var fixtureCount = bytes[5];
+    result.data.heartbeat = {
+      uplinkCounter: counter,
+      statusByte: statusByte,
+      isClassC: statusByte === 0xC5,
+      dmxFixtures: fixtureCount
+    };
+    result.data.raw = bytesToHex(bytes);
+    return result;
+  }
+
+  // Legacy structured message types (first byte is message type)
+  var messageType = bytes[0];
+  if (messageType === 0x01 && bytes.length >= 2) {
+    result.data.status = bytes[1];
+    result.data.message = "Status update";
+    return result;
+  }
+  if (messageType === 0x02 && bytes.length >= 3) {
+    result.data.sensorType = bytes[1];
+    result.data.sensorValue = bytes[2];
+    if (bytes.length > 3) {
+      result.data.additionalData = bytes.slice(3);
+    }
+    return result;
+  }
+  if (messageType === 0x03 && bytes.length >= 2) {
+    var numLights = bytes[1];
+    result.data.dmxStatus = { numberOfLights: numLights };
+    if (bytes.length >= 2 + numLights * 5) {
+      result.data.lights = [];
+      for (var i = 0; i < numLights; i++) {
+        var start = 2 + i * 5;
+        result.data.lights.push({
+          address: bytes[start],
+          channels: [bytes[start + 1], bytes[start + 2], bytes[start + 3], bytes[start + 4]]
+        });
+      }
+    }
+    return result;
+  }
+
+  // Attempt JSON parsing only if payload looks like printable ASCII JSON
+  if (looksLikePrintableAscii(bytes)) {
+    var str = String.fromCharCode.apply(null, bytes);
+    var trimmed = str.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        result.data = JSON.parse(trimmed);
+        return result;
+      } catch (error) {
+        result.data = {
+          raw: bytesToHex(bytes),
+          text: sanitizeString(str)
+        };
+        result.warnings.push("Failed to parse as JSON: " + error.message);
+        return result;
+      }
+    }
+    // Printable but not JSON - return as plain text
+    result.data = {
+      raw: bytesToHex(bytes),
+      text: sanitizeString(str)
+    };
+    return result;
+  }
+
+  // Unknown binary format fallback
+  result.data = {
+    raw: bytesToHex(bytes),
+    bytes: bytes
+  };
+  result.warnings.push("Unknown binary uplink format");
+  return result;
 }
 
 // Helper function to format uptime in a human-readable way
@@ -60,6 +127,28 @@ function bytesToHex(bytes) {
 // Helper function to sanitize strings, removing control characters
 function sanitizeString(str) {
   return str.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+}
+
+function looksLikePrintableAscii(bytes) {
+  for (var i = 0; i < bytes.length; i++) {
+    var b = bytes[i];
+    if (b === 0x09 || b === 0x0A || b === 0x0D) {
+      continue; // allow common whitespace
+    }
+    if (b < 0x20 || b > 0x7E) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function readUint32BE(bytes, offset) {
+  return (
+    (bytes[offset] * 0x1000000) +
+    (bytes[offset + 1] << 16) +
+    (bytes[offset + 2] << 8) +
+    bytes[offset + 3]
+  ) >>> 0;
 }
 
 // Downlink encoder function (application to device)
@@ -291,46 +380,112 @@ function encodeDownlink(input) {
 
 // Downlink decoder function (for debugging in console)
 function decodeDownlink(input) {
-  try {
-    // Convert byte array to string
-    var jsonString = String.fromCharCode.apply(null, input.bytes);
-    
-    // Try to parse as JSON for validation
-    var jsonData = JSON.parse(jsonString);
-    
-    // Check if it's a DMX control message
-    if (jsonData.lights && Array.isArray(jsonData.lights)) {
-      return {
-        data: {
-          jsonData: jsonString,
-          lights: jsonData.lights.length,
-          summary: jsonData.lights.map(function(light) {
-            return "Address: " + light.address + ", Channels: [" + light.channels.join(", ") + "]";
-          }).join(" | ")
-        },
-        warnings: [],
-        errors: []
-      };
-    }
-    
-    // Otherwise just return the JSON data
-    return {
-      data: {
-        jsonData: jsonString
-      },
-      warnings: [],
-      errors: []
-    };
-  } catch (error) {
-    return {
-      data: {
-        raw: bytesToHex(input.bytes),
-        text: sanitizeString(String.fromCharCode.apply(null, input.bytes))
-      },
-      warnings: ["Failed to validate as JSON: " + error],
-      errors: []
-    };
+  var bytes = input.bytes || [];
+  var result = {
+    data: {},
+    warnings: [],
+    errors: []
+  };
+
+  if (bytes.length === 0) {
+    result.errors.push("Empty payload");
+    return result;
   }
+
+  // Config command [0xC0, numLights]
+  if (bytes.length === 2 && bytes[0] === 0xC0) {
+    result.data.config = { numLights: bytes[1] };
+    return result;
+  }
+
+  // Pattern stop command [0xF0]
+  if (bytes.length === 1 && bytes[0] === 0xF0) {
+    result.data.pattern = { type: 'stop' };
+    return result;
+  }
+
+  // Pattern command [0xF1, type, speedL, speedH, cyclesL, cyclesH]
+  if (bytes.length === 6 && bytes[0] === 0xF1) {
+    var patternType = ['colorFade', 'rainbow', 'strobe', 'chase', 'alternate'][bytes[1]] || 'colorFade';
+    var speed = bytes[2] | (bytes[3] << 8);
+    var cycles = bytes[4] | (bytes[5] << 8);
+    result.data.pattern = {
+      type: patternType,
+      speed: speed,
+      cycles: cycles
+    };
+    return result;
+  }
+
+  // Simple single-byte commands (0-4 colors, 0xAA test)
+  if (bytes.length === 1) {
+    var simpleCommands = {
+      0x00: 'off',
+      0x01: 'red',
+      0x02: 'green',
+      0x03: 'blue',
+      0x04: 'white',
+      0xAA: 'test'
+    };
+    if (simpleCommands.hasOwnProperty(bytes[0])) {
+      result.data.command = simpleCommands[bytes[0]];
+      return result;
+    }
+  }
+
+  // ASCII "go" command
+  if (bytes.length === 2 && bytes[0] === 0x67 && bytes[1] === 0x6F) {
+    result.data.command = 'go';
+    return result;
+  }
+
+  // Compact binary lights payload
+  if (bytes.length >= 6 && ((bytes.length - 1) % 5 === 0)) {
+    var lightCount = bytes[0];
+    var expectedSize = 1 + lightCount * 5;
+    if (lightCount > 0 && lightCount <= 25 && expectedSize === bytes.length) {
+      var lights = [];
+      for (var i = 0; i < lightCount; i++) {
+        var offset = 1 + i * 5;
+        lights.push({
+          address: bytes[offset],
+          channels: [
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+            bytes[offset + 4]
+          ]
+        });
+      }
+      result.data.lights = lights;
+      return result;
+    }
+  }
+
+  // Printable ASCII payloads (raw JSON commands, etc.)
+  if (looksLikePrintableAscii(bytes)) {
+    var str = String.fromCharCode.apply(null, bytes).trim();
+    if (str) {
+      try {
+        result.data = JSON.parse(str);
+        return result;
+      } catch (err) {
+        result.data = {
+          raw: bytesToHex(bytes),
+          text: sanitizeString(str)
+        };
+        result.warnings.push('Failed to parse as JSON: ' + err.message);
+        return result;
+      }
+    }
+  }
+
+  // Fallback - unknown binary payload
+  result.data = {
+    raw: bytesToHex(bytes)
+  };
+  result.warnings.push('Unknown downlink format');
+  return result;
 }
 
 // Example usage:
