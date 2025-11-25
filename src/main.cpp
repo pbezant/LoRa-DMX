@@ -132,6 +132,7 @@ volatile bool settingsChanged = false;
 
 // Forward declarations
 void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr);
+void processDownlink(const uint8_t* data, size_t size, int rssi, int snr); // Added forward declaration
 bool processLightsJson(JsonArray lightsArray);
 void processMessageQueue();  // Add this forward declaration
 void send_lora_frame();  // Add this forward declaration for Ticker callback
@@ -140,7 +141,9 @@ void send_lora_frame();  // Add this forward declaration for Ticker callback
 uint8_t receivedData[MAX_JSON_SIZE];
 size_t receivedDataSize = 0;
 uint8_t receivedPort = 0;
-bool dataReceived = false;  // Legacy flag - using direct callback processing now
+int receivedRssi = 0; // Added RSSI storage
+int receivedSnr = 0;  // Added SNR storage
+volatile bool dataReceived = false;  // Changed to volatile for ISR safety
 
 // Global variables for continuous rainbow effect
 bool runningRainbowDemo = false;  // Controls continuous rainbow effect
@@ -1167,7 +1170,29 @@ void debugBytes(const char* label, uint8_t* data, size_t size) {
  * @param port The port on which the data was received
  */
 void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr) {
-  Serial.println("\n\n==== DEBUG: ENTERING DOWNLINK CALLBACK ====");
+  // Check if buffer is available and size is within limits
+  if (size > MAX_JSON_SIZE) {
+    // Cannot print here safely if in ISR, but we can try to ignore
+    return;
+  }
+  
+  // Copy data to buffer for processing in main loop
+  memcpy(receivedData, data, size);
+  receivedDataSize = size;
+  receivedRssi = rssi;
+  receivedSnr = snr;
+  dataReceived = true;
+}
+
+/**
+ * Process downlink data (called from main loop)
+ * 
+ * @param payload The payload data
+ * @param size The size of the payload
+ * @param port The port on which the data was received
+ */
+void processDownlink(const uint8_t* data, size_t size, int rssi, int snr) {
+  Serial.println("\n\n==== DEBUG: ENTERING DOWNLINK PROCESSING (MAIN LOOP) ====");
   
   // Print a detailed raw byte dump of the received payload
   debugBytes("RAW DOWNLINK PAYLOAD", (uint8_t*)data, size);
@@ -1836,7 +1861,7 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
         // Process the example JSON
         bool success = processJsonPayload(exampleJson);
         if (success) {
-          Serial.println("GO command processed successfully - all fixtures set to GREEN");
+                   Serial.println("GO command processed successfully - all fixtures set to GREEN");
           // DmxController::blinkLED(LED_PIN, 3, 200); // MOVED TO LOOP
           return;
         } else {
@@ -2144,42 +2169,6 @@ void handleDownlinkCallback(const uint8_t* data, size_t size, int rssi, int snr)
   }
 }
 
-/**
- * DMX Task - Runs on Core 0 for continuous DMX output
- * This dedicated task ensures DMX signals are sent continuously without
- * being interrupted by LoRa operations which run on Core 1
- */
-void dmxTask(void * parameter) {
-  // Set task priority to high for consistent timing
-  vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
-  
-  Serial.println("DMX task started on Core 0");
-  
-  TickType_t xLastWakeTime;
-  const TickType_t xFrequency = 20; // 20ms refresh (50Hz)
-  
-  // Initialize the xLastWakeTime variable with the current time
-  xLastWakeTime = xTaskGetTickCount();
-  
-  while(true) {
-    // Check if DMX is initialized
-    if (dmxInitialized && dmx != NULL) {
-      // Take mutex to ensure thread-safe access to DMX data
-      if (xSemaphoreTake(dmxMutex, portMAX_DELAY) == pdTRUE) {
-        // Send DMX data - this function now runs uninterrupted by LoRa even during RX windows
-        dmx->sendData();
-        
-        // Give mutex back
-        xSemaphoreGive(dmxMutex);
-      }
-    }
-    
-    // Yield to other tasks at exactly the right refresh frequency
-    // This is more precise than delay() and ensures a stable DMX refresh rate
-    vTaskDelayUntil(&xLastWakeTime, xFrequency);
-  }
-}
-
 void initializeLoRaWAN() {
   Serial.println("Initializing LoRaWAN with credentials from secrets.h:");
   Serial.print("Join EUI: ");
@@ -2404,6 +2393,14 @@ void loop() {
     
     // Process message queue periodically
     processMessageQueue();
+  }
+
+  // Handle received downlink data (deferred from ISR)
+  if (dataReceived) {
+    // Create a local copy to work with (optional, but good practice if we want to re-enable interrupts quickly)
+    // For now, we just process the global buffer
+    processDownlink(receivedData, receivedDataSize, receivedRssi, receivedSnr);
+    dataReceived = false;
   }
   
   // Handle DMX patterns and rainbow demo (still needed for local control)
